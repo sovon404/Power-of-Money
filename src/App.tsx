@@ -1,8 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { WorkspaceProvider, useWorkspace } from './context/WorkspaceContext';
 import { Sidebar, NavItemKey } from './components/layout/Sidebar';
 import { Header } from './components/layout/Header';
 import { ExecutiveDashboard } from './components/dashboard/ExecutiveDashboard';
+import { IncomeView } from './components/income/IncomeView';
+import { ExpensesView } from './components/expenses/ExpensesView';
 import { AccountsView } from './components/accounts/AccountsView';
 import { LedgerView } from './components/ledger/LedgerView';
 import { CreditCardsView } from './components/cards/CreditCardsView';
@@ -17,25 +19,79 @@ import { AiAssistantView } from './components/ai/AiAssistantView';
 import { OpeningBalanceWizard } from './components/setup/OpeningBalanceWizard';
 import { SettingsView } from './components/settings/SettingsView';
 import { NewTransactionModal } from './components/modals/NewTransactionModal';
+import { AuthGate } from './components/auth/AuthGate';
 
-const AppContent: React.FC = () => {
+const VALID_VIEWS: NavItemKey[] = [
+  'dashboard',
+  'income',
+  'expenses',
+  'accounts',
+  'ledger',
+  'cards',
+  'loans',
+  'properties',
+  'savings',
+  'budgets',
+  'recurring',
+  'reports',
+  'family',
+  'ai',
+  'setup',
+  'settings'
+];
+
+interface AppContentProps {
+  onSignOut: () => void;
+}
+
+const AppContent: React.FC<AppContentProps> = ({ onSignOut }) => {
   const { isInitialSetupDone, refreshData } = useWorkspace();
-  const [activeView, setActiveView] = useState<NavItemKey>('dashboard');
+
+  // Read URL hash on load for full URL persistence across refresh
+  const getInitialView = (): NavItemKey => {
+    const hash = window.location.hash.replace(/^#\/?/, '') as NavItemKey;
+    return VALID_VIEWS.includes(hash) ? hash : 'dashboard';
+  };
+
+  const [activeView, setActiveView] = useState<NavItemKey>(getInitialView);
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
   const [isNewTxModalOpen, setIsNewTxModalOpen] = useState(false);
 
-  // If user hasn't completed initial setup and is on dashboard, guide them with a notice
+  // Synchronize browser URL hash with view state
+  useEffect(() => {
+    const handleHashChange = () => {
+      const hash = window.location.hash.replace(/^#\/?/, '') as NavItemKey;
+      if (VALID_VIEWS.includes(hash)) {
+        setActiveView(hash);
+      }
+    };
+
+    window.addEventListener('hashchange', handleHashChange);
+    if (!window.location.hash || !VALID_VIEWS.includes(window.location.hash.replace(/^#\/?/, '') as NavItemKey)) {
+      window.location.hash = `#/${activeView}`;
+    }
+
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, []);
+
+  const navigateTo = (view: NavItemKey) => {
+    setActiveView(view);
+    window.location.hash = `#/${view}`;
+  };
+
   const viewTitles: Record<NavItemKey, string> = {
     dashboard: 'Executive Overview',
+    income: 'Income Hub & Analytics',
+    expenses: 'Central Expenses',
     accounts: 'Accounts & MFS',
     ledger: 'Double-Entry Ledger',
-    cards: 'Credit Cards',
+    cards: 'Credit Cards & In-Out',
     loans: 'Loans & Receivables',
     properties: 'Property Register',
     savings: 'DPS & Savings Goals',
     budgets: 'Budgets & Limits',
     recurring: 'Recurring & Bills',
-    reports: 'Financial Reports',
+    reports: 'Financial Reports & Telemetry',
     family: 'Family Collaboration',
     ai: 'AI Receipt & Advisor',
     setup: 'Opening Balances Wizard',
@@ -43,7 +99,7 @@ const AppContent: React.FC = () => {
   };
 
   const handleOpenAiScan = () => {
-    setActiveView('ai');
+    navigateTo('ai');
   };
 
   return (
@@ -51,9 +107,10 @@ const AppContent: React.FC = () => {
       {/* Sidebar Navigation */}
       <Sidebar
         activeView={activeView}
-        onSelectView={setActiveView}
+        onSelectView={navigateTo}
         isOpenMobile={isMobileNavOpen}
         onCloseMobile={() => setIsMobileNavOpen(false)}
+        onSignOut={onSignOut}
       />
 
       {/* Main Content Area */}
@@ -74,7 +131,7 @@ const AppContent: React.FC = () => {
               <span>Enter your real opening bank, cash, and bKash balances to establish Opening Equity.</span>
             </div>
             <button
-              onClick={() => setActiveView('setup')}
+              onClick={() => navigateTo('setup')}
               className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold transition-colors shrink-0 text-left sm:text-center"
             >
               Start Opening Wizard &rarr;
@@ -82,13 +139,20 @@ const AppContent: React.FC = () => {
           </div>
         )}
 
-        {/* Viewport Content */}
+        {/* Viewport Content with URL Persistence */}
         <main className="flex-1 p-4 sm:p-6 max-w-7xl w-full mx-auto">
           {activeView === 'dashboard' && (
             <ExecutiveDashboard
-              onNavigate={setActiveView}
+              onNavigate={navigateTo}
               onOpenNewTransaction={() => setIsNewTxModalOpen(true)}
               onOpenAiScan={handleOpenAiScan}
+            />
+          )}
+          {activeView === 'income' && <IncomeView />}
+          {activeView === 'expenses' && (
+            <ExpensesView
+              onOpenAiScan={handleOpenAiScan}
+              onOpenNewTransaction={() => setIsNewTxModalOpen(true)}
             />
           )}
           {activeView === 'accounts' && <AccountsView />}
@@ -122,9 +186,29 @@ const AppContent: React.FC = () => {
 };
 
 export default function App() {
+  // STRICT AUTHENTICATION GATE:
+  // Must go with definite account. No guest mode. No moving forward without signing in.
+  const [authUser, setAuthUser] = useState<{ email: string; name: string } | null>(() => {
+    try {
+      const saved = localStorage.getItem('pom_auth_session');
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
+
+  const handleSignOut = () => {
+    localStorage.removeItem('pom_auth_session');
+    setAuthUser(null);
+  };
+
+  if (!authUser) {
+    return <AuthGate onAuthenticated={(user) => setAuthUser(user)} />;
+  }
+
   return (
     <WorkspaceProvider>
-      <AppContent />
+      <AppContent onSignOut={handleSignOut} />
     </WorkspaceProvider>
   );
 }

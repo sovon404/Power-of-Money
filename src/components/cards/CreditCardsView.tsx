@@ -46,6 +46,19 @@ export const CreditCardsView: React.FC = () => {
   const [payMemo, setPayMemo] = useState('Credit Card Bill Settlement');
   const [paymentSuccessMsg, setPaymentSuccessMsg] = useState<string | null>(null);
 
+  // New Card Charge (Expense) Form state
+  const [showChargeModal, setShowChargeModal] = useState(false);
+  const [selectedCardForCharge, setSelectedCardForCharge] = useState<CreditCard | null>(null);
+  const [chargeAmount, setChargeAmount] = useState('');
+  const [chargeCategoryId, setChargeCategoryId] = useState('');
+  const [chargeMerchant, setChargeMerchant] = useState('');
+  const [chargeMemo, setChargeMemo] = useState('');
+  const [chargeDate, setChargeDate] = useState(new Date().toISOString().split('T')[0]);
+
+  const categories = db.getCategories(workspaceId);
+  const expenseCategories = categories.filter(c => c.type === 'expense');
+  const journalEntries = db.getJournalEntries(workspaceId);
+
   const handleAddCard = (e: React.FormEvent) => {
     e.preventDefault();
     if (!cardName.trim() || !lastFour.trim() || !creditLimit) return;
@@ -136,6 +149,57 @@ export const CreditCardsView: React.FC = () => {
         setPaymentSuccessMsg(null);
         setShowPayModal(false);
       }, 2000);
+    }
+  };
+
+  const handleChargeCard = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedCardForCharge || !chargeAmount || !chargeCategoryId) return;
+
+    const amt = parseFloat(chargeAmount);
+    if (isNaN(amt) || amt <= 0) return;
+
+    const chosenCat = categories.find(c => c.id === chargeCategoryId);
+    const catName = chosenCat?.name || 'Expense';
+
+    // Strict Double-entry rule for credit card charge/expense:
+    // Debit: Operating Expense Category (e.g. Personal Food, Mess Bill, Tech)
+    // Credit: Credit Card Liability Account (Card liability increases)
+    const res = db.postJournalEntry(workspaceId, {
+      memo: chargeMemo || `Card Swipe: ${chargeMerchant || 'Purchase'} (${catName})`,
+      source_type: 'credit_card_charge',
+      source_id: selectedCardForCharge.id,
+      entry_date: chargeDate,
+      lines: [
+        {
+          account_id: '',
+          category_id: chargeCategoryId,
+          line_type: 'debit',
+          amount: amt,
+          counterparty: chargeMerchant,
+          memo: chargeMemo || `Card purchase: ${catName}`,
+        },
+        {
+          account_id: selectedCardForCharge.account_id,
+          line_type: 'credit',
+          amount: amt,
+          memo: `Liability charged on ${selectedCardForCharge.card_name}`,
+        },
+      ],
+    });
+
+    if (res.success) {
+      // Update account cached balance
+      const liabAcc = accounts.find(a => a.id === selectedCardForCharge.account_id);
+      if (liabAcc) {
+        liabAcc.current_balance_cached += amt;
+        db.saveAccount(liabAcc);
+      }
+      refreshData();
+      setShowChargeModal(false);
+      setChargeAmount('');
+      setChargeMerchant('');
+      setChargeMemo('');
     }
   };
 
@@ -272,15 +336,26 @@ export const CreditCardsView: React.FC = () => {
                     </span>
 
                     {canWrite && (
-                      <button
-                        onClick={() => {
-                          setSelectedCardForPayment(card);
-                          setShowPayModal(true);
-                        }}
-                        className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-slate-900 dark:bg-slate-800 hover:bg-slate-800 text-white transition-colors"
-                      >
-                        Settle / Pay Bill
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => {
+                            setSelectedCardForCharge(card);
+                            setShowChargeModal(true);
+                          }}
+                          className="px-2.5 py-1.5 text-xs font-semibold rounded-lg bg-rose-50 dark:bg-rose-950/60 hover:bg-rose-100 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800 transition-colors"
+                        >
+                          + Charge Expense
+                        </button>
+                        <button
+                          onClick={() => {
+                            setSelectedCardForPayment(card);
+                            setShowPayModal(true);
+                          }}
+                          className="px-3 py-1.5 text-xs font-semibold rounded-lg bg-slate-900 dark:bg-slate-800 hover:bg-slate-800 text-white transition-colors"
+                        >
+                          Settle Bill
+                        </button>
+                      </div>
                     )}
                   </div>
                 </div>
@@ -289,6 +364,186 @@ export const CreditCardsView: React.FC = () => {
           })}
         </div>
       )}
+
+      {/* ======================================================== */}
+      {/* CONNECTED CREDIT CARD IN-OUT LEDGER & EXPENSE BREAKDOWN   */}
+      {/* ======================================================== */}
+      <div className="space-y-4 pt-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+              <CreditCardIcon className="w-4 h-4 text-rose-500" />
+              <span>Credit In-Out Ledger &amp; Connected Expenses</span>
+            </h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              Live tracking of all charges (outflow expenses added) and payments (liability reductions) across all credit cards.
+            </p>
+          </div>
+        </div>
+
+        {/* In-Out Summary Cards */}
+        {(() => {
+          // Calculate card in-out numbers
+          const cardAccountIds = new Set(cards.map(c => c.account_id));
+          let totalCharges = 0; // Credit in (expenses charged to card)
+          let totalPayments = 0; // Credit out (bills paid to card)
+          const cardCategorySpend: Record<string, { name: string; amount: number }> = {};
+
+          interface CardLedgerItem {
+            id: string;
+            date: string;
+            memo: string;
+            type: 'charge' | 'payment';
+            amount: number;
+            cardName: string;
+            categoryOrSource: string;
+          }
+
+          const items: CardLedgerItem[] = [];
+
+          journalEntries.forEach(entry => {
+            if (entry.status !== 'posted') return;
+
+            // Check if any line touches a card liability account
+            entry.lines?.forEach(line => {
+              if (cardAccountIds.has(line.account_id)) {
+                const card = cards.find(c => c.account_id === line.account_id);
+                const cardLabel = card ? `${card.card_name} (•••• ${card.last_four_digits})` : 'Credit Card';
+
+                if (line.line_type === 'credit') {
+                  // Credit to card liability = charge/expense added
+                  totalCharges += line.amount;
+
+                  // Find companion debit line for category
+                  const compLine = entry.lines?.find(l => l.id !== line.id && l.category_id);
+                  const cat = categories.find(c => c.id === compLine?.category_id);
+                  const catName = cat?.name || 'Operating Expense';
+
+                  if (cat) {
+                    if (!cardCategorySpend[cat.id]) cardCategorySpend[cat.id] = { name: cat.name, amount: 0 };
+                    cardCategorySpend[cat.id].amount += line.amount;
+                  }
+
+                  items.push({
+                    id: line.id,
+                    date: entry.entry_date,
+                    memo: entry.memo,
+                    type: 'charge',
+                    amount: line.amount,
+                    cardName: cardLabel,
+                    categoryOrSource: catName,
+                  });
+                } else if (line.line_type === 'debit') {
+                  // Debit to card liability = settlement/payment
+                  totalPayments += line.amount;
+
+                  const compLine = entry.lines?.find(l => l.id !== line.id && l.account_id);
+                  const payerAcc = accounts.find(a => a.id === compLine?.account_id);
+
+                  items.push({
+                    id: line.id,
+                    date: entry.entry_date,
+                    memo: entry.memo,
+                    type: 'payment',
+                    amount: line.amount,
+                    cardName: cardLabel,
+                    categoryOrSource: payerAcc ? `Paid from ${payerAcc.name}` : 'Bank Transfer',
+                  });
+                }
+              }
+            });
+          });
+
+          return (
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs">
+                  <span className="text-2xs font-semibold text-rose-500 uppercase block mb-1">
+                    Total Card Charges (Credit In)
+                  </span>
+                  <div className="text-xl font-bold font-mono text-rose-600 dark:text-rose-400 tabular-nums">
+                    {formatMoney(totalCharges)}
+                  </div>
+                  <span className="text-3xs text-slate-400 block mt-1">Expenses swiped onto cards</span>
+                </div>
+
+                <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs">
+                  <span className="text-2xs font-semibold text-emerald-500 uppercase block mb-1">
+                    Total Bill Settlements (Credit Out)
+                  </span>
+                  <div className="text-xl font-bold font-mono text-emerald-600 dark:text-emerald-400 tabular-nums">
+                    {formatMoney(totalPayments)}
+                  </div>
+                  <span className="text-3xs text-slate-400 block mt-1">Debited liability reductions</span>
+                </div>
+
+                <div className="p-4 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs">
+                  <span className="text-2xs font-semibold text-slate-500 uppercase block mb-1">
+                    Net Outstanding Card Liability
+                  </span>
+                  <div className="text-xl font-bold font-mono text-slate-900 dark:text-white tabular-nums">
+                    {formatMoney(accounts.filter(a => a.account_type_id === 'credit_card').reduce((s, a) => s + a.current_balance_cached, 0))}
+                  </div>
+                  <span className="text-3xs text-slate-400 block mt-1">Active revolving dues</span>
+                </div>
+              </div>
+
+              {/* Connected In-Out Activity Table */}
+              <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left border-collapse">
+                    <thead>
+                      <tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950/50 text-2xs uppercase tracking-wider text-slate-500 font-semibold">
+                        <th className="py-2.5 px-4">Date</th>
+                        <th className="py-2.5 px-4">Type</th>
+                        <th className="py-2.5 px-4">Card</th>
+                        <th className="py-2.5 px-4">Description / Linked Category</th>
+                        <th className="py-2.5 px-4 text-right">In-Out Amount</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-xs">
+                      {items.length === 0 ? (
+                        <tr>
+                          <td colSpan={5} className="py-6 text-center text-slate-400">
+                            No credit card swipes or settlements recorded yet. Use &ldquo;+ Charge Expense&rdquo; above to log a card swipe.
+                          </td>
+                        </tr>
+                      ) : (
+                        items.map(item => (
+                          <tr key={item.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
+                            <td className="py-2.5 px-4 font-mono text-slate-500">{item.date}</td>
+                            <td className="py-2.5 px-4">
+                              <span className={`px-2 py-0.5 rounded-full text-3xs font-semibold uppercase ${
+                                item.type === 'charge'
+                                  ? 'bg-rose-100 text-rose-800 dark:bg-rose-900/60 dark:text-rose-300'
+                                  : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-300'
+                              }`}>
+                                {item.type === 'charge' ? 'Charge (Expense)' : 'Payment (Settle)'}
+                              </span>
+                            </td>
+                            <td className="py-2.5 px-4 text-slate-700 dark:text-slate-300 font-medium">
+                              {item.cardName}
+                            </td>
+                            <td className="py-2.5 px-4 text-slate-900 dark:text-slate-100">
+                              <div>{item.memo}</div>
+                              <span className="text-2xs text-slate-400">{item.categoryOrSource}</span>
+                            </td>
+                            <td className={`py-2.5 px-4 text-right font-mono font-bold tabular-nums ${
+                              item.type === 'charge' ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'
+                            }`}>
+                              {item.type === 'charge' ? `+${formatMoney(item.amount)}` : `-${formatMoney(item.amount)}`}
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
+      </div>
 
       {/* Add Card Modal */}
       {showAddCardModal && (
@@ -542,6 +797,125 @@ export const CreditCardsView: React.FC = () => {
                   className="px-4 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-500 rounded-lg shadow-xs"
                 >
                   Confirm Card Payment
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Charge Card (Expense) Modal */}
+      {showChargeModal && selectedCardForCharge && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-md w-full p-6 shadow-2xl">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800 mb-3">
+              <div>
+                <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                  Record Credit Card Swipe (Expense)
+                </h3>
+                <span className="text-2xs text-slate-500">
+                  Charged on {selectedCardForCharge.card_name} (•••• {selectedCardForCharge.last_four_digits})
+                </span>
+              </div>
+              <button
+                onClick={() => setShowChargeModal(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-700"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleChargeCard} className="space-y-3.5">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  Expense Category (from 36 Workspace Categories)
+                </label>
+                <select
+                  value={chargeCategoryId}
+                  onChange={(e) => setChargeCategoryId(e.target.value)}
+                  className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                  required
+                >
+                  <option value="">Select expense category</option>
+                  {expenseCategories.map(c => (
+                    <option key={c.id} value={c.id}>{c.name}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Amount (BDT ৳)
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0.01"
+                    placeholder="0.00"
+                    value={chargeAmount}
+                    onChange={(e) => setChargeAmount(e.target.value)}
+                    className="w-full px-3 py-2 text-xs font-mono font-semibold rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Charge Date
+                  </label>
+                  <input
+                    type="date"
+                    value={chargeDate}
+                    onChange={(e) => setChargeDate(e.target.value)}
+                    className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  Merchant / Store Name
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. Shwapno, Star Tech, Cloud Server"
+                  value={chargeMerchant}
+                  onChange={(e) => setChargeMerchant(e.target.value)}
+                  className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  Description / Memo
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. Monthly groceries, tech equipment"
+                  value={chargeMemo}
+                  onChange={(e) => setChargeMemo(e.target.value)}
+                  className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                />
+              </div>
+
+              <div className="p-2.5 rounded-lg bg-rose-50/60 dark:bg-rose-950/40 border border-rose-200 dark:border-rose-800 text-2xs text-rose-800 dark:text-rose-300">
+                <strong>Accounting Guardrail:</strong> This swipe debits your chosen Operating Expense category and credits your Credit Card Liability.
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setShowChargeModal(false)}
+                  className="px-3 py-2 text-xs font-medium text-slate-600 dark:text-slate-400"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 text-xs font-semibold text-white bg-rose-600 hover:bg-rose-500 rounded-lg shadow-xs"
+                >
+                  Confirm Card Expense
                 </button>
               </div>
             </form>

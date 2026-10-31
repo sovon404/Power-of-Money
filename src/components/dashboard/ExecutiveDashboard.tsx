@@ -14,6 +14,7 @@ import {
 import { useWorkspace } from '../../context/WorkspaceContext';
 import { db } from '../../services/db';
 import { NavItemKey } from '../layout/Sidebar';
+import { AccountsLiveCockpit } from './AccountsLiveCockpit';
 
 interface ExecutiveDashboardProps {
   onNavigate: (view: NavItemKey) => void;
@@ -97,6 +98,13 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({
 
   return (
     <div className="space-y-6">
+      {/* 1. Accounts & Wallets Live Financial Cockpit (Upper-side of dashboard as requested) */}
+      <AccountsLiveCockpit
+        onNavigateAccounts={() => onNavigate('accounts')}
+        onNavigateIncome={() => onNavigate('income')}
+        onNavigateCards={() => onNavigate('cards')}
+      />
+
       {/* Top Welcome & KPI Metric Row */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Net Worth Card */}

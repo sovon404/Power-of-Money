@@ -17,12 +17,17 @@ import {
   Plus, 
   Check, 
   ShieldCheck, 
-  ChevronDown
+  ChevronDown,
+  TrendingUp,
+  Receipt,
+  LogOut
 } from 'lucide-react';
 import { useWorkspace } from '../../context/WorkspaceContext';
 
 export type NavItemKey = 
   | 'dashboard'
+  | 'income'
+  | 'expenses'
   | 'accounts'
   | 'ledger'
   | 'cards'
@@ -42,6 +47,7 @@ interface SidebarProps {
   onSelectView: (view: NavItemKey) => void;
   isOpenMobile: boolean;
   onCloseMobile: () => void;
+  onSignOut?: () => void;
 }
 
 export const Sidebar: React.FC<SidebarProps> = ({
@@ -49,6 +55,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   onSelectView,
   isOpenMobile,
   onCloseMobile,
+  onSignOut,
 }) => {
   const { 
     currentWorkspace, 
@@ -64,6 +71,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
 
   const navItems: Array<{ key: NavItemKey; label: string; icon: React.FC<{ className?: string }>; section?: string }> = [
     { key: 'dashboard', label: 'Executive Dashboard', icon: LayoutDashboard },
+    { key: 'income', label: 'Income Hub', icon: TrendingUp },
+    { key: 'expenses', label: 'Central Expenses', icon: Receipt },
     { key: 'accounts', label: 'Accounts & MFS', icon: Wallet },
     { key: 'ledger', label: 'Double-Entry Ledger', icon: BookOpen },
     { key: 'cards', label: 'Credit Cards', icon: CreditCard },
@@ -217,9 +226,20 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <span className="block text-slate-400 text-2xs">Workspace {userRole}</span>
               </div>
             </div>
-            <div className="flex items-center gap-1 text-emerald-400 text-2xs font-semibold">
-              <ShieldCheck className="w-3.5 h-3.5" />
-              <span>Isolated</span>
+            <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1 text-emerald-400 text-2xs font-semibold">
+                <ShieldCheck className="w-3.5 h-3.5" />
+                <span>Isolated</span>
+              </div>
+              {onSignOut && (
+                <button
+                  onClick={onSignOut}
+                  title="Sign out of account"
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-rose-400 hover:bg-slate-800 transition-colors ml-1"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                </button>
+              )}
             </div>
           </div>
         </div>

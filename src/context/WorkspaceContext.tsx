@@ -40,6 +40,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     // Default to first workspace or active one
     const savedActiveId = localStorage.getItem('pom_active_workspace_id');
     const active = all.find(w => w.id === savedActiveId) || workspace;
+    db.ensureUserCockpitAccounts(active.id);
     setCurrentWorkspace(active);
     localStorage.setItem('pom_active_workspace_id', active.id);
   }, [refreshKey]);
