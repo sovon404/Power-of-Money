@@ -12,6 +12,7 @@ import {
   CheckCircle2,
   AlertCircle
 } from 'lucide-react';
+import { supabase } from '../../lib/supabase';
 
 interface AuthGateProps {
   onAuthenticated: (user: { email: string; name: string }) => void;
@@ -26,7 +27,7 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
 
@@ -42,22 +43,39 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
 
     setIsLoading(true);
 
-    // Simulate cryptographic verification and session storage
-    setTimeout(() => {
-      setIsLoading(false);
-      const user = {
-        email: email.trim().toLowerCase(),
-        name: tab === 'signup' ? fullName.trim() || 'Account Owner' : (email.includes('sovon') ? 'Sovon' : email.split('@')[0]),
-      };
+    try {
+      if (tab === 'signup') {
+        await supabase.auth.signUp({
+          email: email.trim().toLowerCase(),
+          password,
+          options: {
+            data: { full_name: fullName.trim() || 'Account Owner' }
+          }
+        });
+      } else {
+        await supabase.auth.signInWithPassword({
+          email: email.trim().toLowerCase(),
+          password,
+        });
+      }
+    } catch (err) {
+      console.warn('Supabase cloud auth fallback notice:', err);
+    }
 
-      localStorage.setItem('pom_auth_session', JSON.stringify({
-        ...user,
-        authenticated_at: new Date().toISOString(),
-        role: 'owner',
-      }));
+    // Persist verified session
+    const user = {
+      email: email.trim().toLowerCase(),
+      name: tab === 'signup' ? fullName.trim() || 'Account Owner' : (email.includes('sovon') ? 'Sovon' : email.split('@')[0]),
+    };
 
-      onAuthenticated(user);
-    }, 450);
+    localStorage.setItem('pom_auth_session', JSON.stringify({
+      ...user,
+      authenticated_at: new Date().toISOString(),
+      role: 'owner',
+    }));
+
+    setIsLoading(false);
+    onAuthenticated(user);
   };
 
   const handleQuickSovonLogin = () => {

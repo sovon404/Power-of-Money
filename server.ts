@@ -40,21 +40,43 @@ app.get('/api/health', (_req: Request, res: Response) => {
   });
 });
 
-app.get('/api/db-check', (_req: Request, res: Response) => {
-  // Test connectivity, verify environment and Supabase / local persistence state
-  const supabaseUrl = process.env.VITE_SUPABASE_URL || 'local-accounting-vault';
+app.get('/api/db-check', async (_req: Request, res: Response) => {
+  const supabaseUrl = process.env.VITE_SUPABASE_URL || 'https://apxbmwxovgpnttwprijw.supabase.co';
+  const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFweGJtd3hvdmdwbnR0d3ByaWp3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTM0NDExOTIsImV4cCI6MjEwOTAxNzE5Mn0.WLknIE8p1JbkKIDRFx1g6uLLC6gY4o-G967fk5EOd5U';
   const hasGemini = Boolean(process.env.GEMINI_API_KEY);
 
+  const start = performance.now();
+  let supabaseReachable = false;
+  let authStatus = 'unknown';
+
+  try {
+    const pingResponse = await fetch(`${supabaseUrl}/auth/v1/health`, {
+      method: 'GET',
+      headers: {
+        'apikey': supabaseAnonKey,
+        'Authorization': `Bearer ${supabaseAnonKey}`,
+      },
+    });
+    supabaseReachable = pingResponse.ok;
+    authStatus = pingResponse.ok ? 'Online (HTTP 200)' : `HTTP ${pingResponse.status}`;
+  } catch (err: any) {
+    supabaseReachable = false;
+    authStatus = err.message || 'Connection failed';
+  }
+
+  const latencyMs = Math.max(1, Math.round(performance.now() - start));
+
   res.json({
-    success: true,
-    status: 'connected',
+    success: supabaseReachable,
+    status: supabaseReachable ? 'connected' : 'offline',
     provider: 'PostgreSQL / Supabase Double-Entry Engine',
     databaseTarget: supabaseUrl,
+    supabaseAuth: authStatus,
     geminiService: hasGemini ? 'configured' : 'fallback-ready',
     activeCurrency: 'BDT (৳)',
     accountingMode: 'Double-Entry Balanced Ledger',
     timestamp: new Date().toISOString(),
-    latencyMs: Math.floor(Math.random() * 8) + 4,
+    latencyMs,
   });
 });
 
@@ -250,8 +272,8 @@ async function initServer() {
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
-        hmr: process.env.DISABLE_HMR !== 'true',
-        watch: process.env.DISABLE_HMR === 'true' ? null : {},
+        hmr: false,
+        watch: null,
       },
       appType: 'spa',
     });
