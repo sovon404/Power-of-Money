@@ -1,0 +1,6 @@
+{
+  "name": "Power of Money",
+  "description": "A modern, secure, customizable personal and family financial management web application with double-entry accounting, property register, and financial analytics.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
