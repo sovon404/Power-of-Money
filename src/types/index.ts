@@ -141,11 +141,20 @@ export interface JournalEntry {
   lines?: JournalLine[];
 }
 
+export interface IncomeTypeItem {
+  id: string;
+  name: string;
+  description?: string;
+  color: string;
+  icon: string;
+}
+
 export interface Category {
   id: string;
   workspace_id: string;
   name: string;
   type: 'income' | 'expense' | 'transfer_allocation';
+  income_type?: string;
   accounting_classification: 
     | 'expense_operating'
     | 'expense_finance'

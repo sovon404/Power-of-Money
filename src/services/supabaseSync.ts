@@ -215,7 +215,7 @@ class SupabaseSyncEngine {
     try {
       await this.ensureRemoteWorkspace(workspaceId);
 
-      await supabase.from('categories').upsert({
+      const catPayload: any = {
         id: toUuid(cat.id),
         workspace_id: wsUuid,
         name: cat.name,
@@ -227,7 +227,30 @@ class SupabaseSyncEngine {
         is_archived: Boolean(cat.is_archived),
         sort_order: cat.sort_order || 0,
         updated_at: new Date().toISOString(),
-      });
+      };
+      if (cat.income_type) {
+        catPayload.income_type = cat.income_type;
+      }
+
+      try {
+        const { error } = await supabase.from('categories').upsert(catPayload);
+        if (error) {
+          // If the column income_type does not exist on remote supabase categories table yet, fallback without it
+          if (error.message?.includes('income_type') || error.details?.includes('income_type') || error.code === '42703') {
+            delete catPayload.income_type;
+            await supabase.from('categories').upsert(catPayload);
+          } else {
+            console.warn('Sync category error:', error);
+          }
+        }
+      } catch (err) {
+        delete catPayload.income_type;
+        try {
+          await supabase.from('categories').upsert(catPayload);
+        } catch {
+          console.warn('Sync category exception:', err);
+        }
+      }
     } catch (err) {
       console.warn('Sync category error:', err);
     }

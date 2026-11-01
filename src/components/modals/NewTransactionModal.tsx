@@ -115,6 +115,7 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
       workspace_id: workspaceId,
       name,
       type: mode === 'income' ? 'income' : 'expense',
+      income_type: mode === 'income' ? 'other' : undefined,
       accounting_classification: mode === 'income' ? 'income_operating' : 'expense_operating',
       icon: mode === 'income' ? 'plus-circle' : 'tag',
       color: mode === 'income' ? '#10b981' : '#f97316',
@@ -205,16 +206,18 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
         return;
       }
 
+      const defaultOperatingAccId = toUuid(`acc_expense_operating_${workspaceId}`);
       const lines = [
         {
           account_id: sourceAccountId,
           line_type: 'credit' as const,
           amount: numAmount,
           memo: memoText,
+          category_id: categoryId || undefined,
           counterparty: counterparty.trim() || undefined,
         },
         {
-          account_id: sourceAccountId,
+          account_id: defaultOperatingAccId,
           line_type: 'debit' as const,
           amount: numAmount,
           memo: `${selectedCat?.name || 'Expense'}: ${memoText}`,
@@ -255,6 +258,7 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
         return;
       }
 
+      const defaultIncomeAccId = toUuid(`acc_income_earned_${workspaceId}`);
       const lines = [
         {
           account_id: destinationAccountId,
@@ -265,10 +269,11 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
           counterparty: counterparty.trim() || undefined,
         },
         {
-          account_id: destinationAccountId,
+          account_id: defaultIncomeAccId,
           line_type: 'credit' as const,
           amount: numAmount,
           memo: `${selectedCat?.name || 'Income'}: ${memoText}`,
+          category_id: categoryId || undefined,
           counterparty: counterparty.trim() || undefined,
         },
       ];
@@ -361,12 +366,21 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
     ? categories.filter(c => c.type === 'income')
     : categories.filter(c => c.type === 'expense' || c.type === 'transfer_allocation');
 
-  const categoryOptions = activeCategories.map(c => ({
-    value: c.id,
-    label: c.name,
-    subLabel: c.type,
-    color: c.color,
-  }));
+  const incomeTypes = db.getIncomeTypes(workspaceId);
+  const incomeTypeMap = new Map(incomeTypes.map(t => [t.id, t.name]));
+
+  const categoryOptions = activeCategories.map(c => {
+    let sub: string = c.type;
+    if (c.type === 'income') {
+      sub = (c.income_type && incomeTypeMap.get(c.income_type)) || (c.income_type ? c.income_type.replace('_', ' ') : 'General');
+    }
+    return {
+      value: c.id,
+      label: c.name,
+      subLabel: sub,
+      color: c.color,
+    };
+  });
 
   const accountOptions = accounts.map(a => ({
     value: a.id,

@@ -44,6 +44,7 @@ const STORAGE_KEYS = {
 export const SEED_CATEGORIES_DATA: Array<{
   name: string;
   type: 'income' | 'expense' | 'transfer_allocation';
+  income_type?: string;
   accounting_classification: any;
   icon: string;
   color: string;
@@ -66,7 +67,7 @@ export const SEED_CATEGORIES_DATA: Array<{
   { name: 'Mess Bill', type: 'expense', accounting_classification: 'expense_operating', icon: 'coffee', color: '#d97706' },
   { name: 'Lend Money (To Others)', type: 'transfer_allocation', accounting_classification: 'receivable_outflow', icon: 'arrow-up-right', color: '#6366f1' },
   { name: 'Bank & Card Charge', type: 'expense', accounting_classification: 'expense_finance', icon: 'credit-card', color: '#ef4444' },
-  { name: 'Lend Money Return', type: 'income', accounting_classification: 'income_operating', icon: 'arrow-down-left', color: '#10b981' },
+  { name: 'Lend Money Return', type: 'income', income_type: 'other', accounting_classification: 'income_operating', icon: 'arrow-down-left', color: '#10b981' },
   { name: 'PSI', type: 'expense', accounting_classification: 'expense_operating', icon: 'file-text', color: '#64748b' },
   { name: 'Wify', type: 'expense', accounting_classification: 'expense_operating', icon: 'radio', color: '#06b6d4' },
   { name: 'Sisters', type: 'expense', accounting_classification: 'expense_operating', icon: 'heart', color: '#ec4899' },
@@ -84,13 +85,15 @@ export const SEED_CATEGORIES_DATA: Array<{
   { name: 'Protein Target', type: 'expense', accounting_classification: 'expense_operating', icon: 'activity', color: '#10b981' },
   { name: 'Adjustment', type: 'expense', accounting_classification: 'expense_operating', icon: 'sliders', color: '#64748b' },
   { name: 'FITA', type: 'expense', accounting_classification: 'expense_operating', icon: 'award', color: '#f59e0b' },
-  // Core Income Categories
-  { name: 'Salary', type: 'income', accounting_classification: 'income_operating', icon: 'briefcase', color: '#10b981' },
-  { name: 'Allowances & Bonus', type: 'income', accounting_classification: 'income_operating', icon: 'award', color: '#059669' },
-  { name: 'Business / Freelance', type: 'income', accounting_classification: 'income_operating', icon: 'laptop', color: '#047857' },
-  { name: 'Rental Income', type: 'income', accounting_classification: 'income_operating', icon: 'building', color: '#065f46' },
-  { name: 'Investment Returns', type: 'income', accounting_classification: 'income_operating', icon: 'trending-up', color: '#064e3b' },
-  { name: 'Other Income', type: 'income', accounting_classification: 'income_operating', icon: 'plus-circle', color: '#14b8a6' },
+  // Core Income Categories with Types (Salary, Remote/Freelance, Land Mortgage, Business, Investment, Other)
+  { name: 'Salary', type: 'income', income_type: 'salary', accounting_classification: 'income_operating', icon: 'briefcase', color: '#10b981' },
+  { name: 'Allowances & Bonus', type: 'income', income_type: 'salary', accounting_classification: 'income_operating', icon: 'award', color: '#059669' },
+  { name: 'Business / Freelance', type: 'income', income_type: 'remote_freelance', accounting_classification: 'income_operating', icon: 'laptop', color: '#0284c7' },
+  { name: 'Remote Work Contracts', type: 'income', income_type: 'remote_freelance', accounting_classification: 'income_operating', icon: 'globe', color: '#38bdf8' },
+  { name: 'Land Mortgage & Lease', type: 'income', income_type: 'land_mortgage', accounting_classification: 'income_operating', icon: 'building', color: '#d97706' },
+  { name: 'Rental Income', type: 'income', income_type: 'land_mortgage', accounting_classification: 'income_operating', icon: 'home', color: '#f59e0b' },
+  { name: 'Investment Returns', type: 'income', income_type: 'investment', accounting_classification: 'income_operating', icon: 'trending-up', color: '#0d9488' },
+  { name: 'Other Income', type: 'income', income_type: 'other', accounting_classification: 'income_operating', icon: 'plus-circle', color: '#14b8a6' },
 ];
 
 class DatabaseEngine {
@@ -173,6 +176,7 @@ class DatabaseEngine {
         workspace_id: workspaceId,
         name: c.name,
         type: c.type,
+        income_type: c.income_type,
         accounting_classification: c.accounting_classification,
         icon: c.icon,
         color: c.color,
@@ -184,6 +188,34 @@ class DatabaseEngine {
       this.set(STORAGE_KEYS.CATEGORIES, [...allCats, ...newCats]);
       newCats.forEach(cat => supabaseSync.syncCategory(cat, workspaceId));
     }
+  }
+
+  // Income Types Management
+  getIncomeTypes(workspaceId: string): Array<{ id: string; name: string; description?: string; color: string; icon: string }> {
+    const key = `pom_income_types_${workspaceId}`;
+    const defaultTypes = [
+      { id: 'salary', name: 'Salary / Employment', description: 'Monthly wages, official pay, bonuses', color: '#10b981', icon: 'briefcase' },
+      { id: 'remote_freelance', name: 'Remote / Freelancing', description: 'Tech contracts, software freelancing, remittance', color: '#0284c7', icon: 'laptop' },
+      { id: 'land_mortgage', name: 'Land Mortgage & Rent', description: 'Land mortgage yields, plot lease, tenant rent', color: '#d97706', icon: 'building' },
+      { id: 'business', name: 'Business & Trade', description: 'Commercial enterprise, trading, products', color: '#8b5cf6', icon: 'globe' },
+      { id: 'investment', name: 'Investment Returns', description: 'DPS profits, dividends, capital gains', color: '#0d9488', icon: 'trending-up' },
+      { id: 'other', name: 'Other Inflows', description: 'Gifts, one-off receipts, allowances', color: '#64748b', icon: 'plus-circle' },
+    ];
+    try {
+      const saved = localStorage.getItem(key);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+      }
+    } catch {
+      // fallback
+    }
+    return defaultTypes;
+  }
+
+  saveIncomeTypes(workspaceId: string, types: Array<{ id: string; name: string; description?: string; color: string; icon: string }>): void {
+    const key = `pom_income_types_${workspaceId}`;
+    localStorage.setItem(key, JSON.stringify(types));
   }
 
   // Hydrates local storage cache with pure live data from Supabase DB (no dummy data)
@@ -267,6 +299,7 @@ class DatabaseEngine {
       { defaultId: `acc_dspf_baf_${workspaceId}`, name: 'DSPF (BAF)', type: 'savings_dps', provider: 'BAF / DSPF', icon: 'piggy-bank', color: '#0d9488' },
       { defaultId: `acc_unity_fund_${workspaceId}`, name: 'Unity Fund-2026', type: 'savings_dps', provider: 'Unity Fund', icon: 'flag', color: '#eab308' },
       { defaultId: `acc_los_fund_${workspaceId}`, name: 'LOS Fund', type: 'savings_dps', provider: 'LOS Fund', icon: 'layers', color: '#9333ea' },
+      { defaultId: `acc_income_earned_${workspaceId}`, name: 'Earned Revenue & Income', type: 'income_salary', provider: 'Revenue', icon: 'trending-up', color: '#10b981' },
       { defaultId: `acc_equity_offset_${workspaceId}`, name: 'Opening Balance Equity', type: 'opening_equity', provider: 'Equity', icon: 'scale', color: '#64748b' },
     ];
 
