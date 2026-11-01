@@ -1,27 +1,33 @@
-import React, { useState } from 'react';
-import { X, ArrowRightLeft, ArrowDownRight, ArrowUpRight, Scale, AlertCircle } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { X, ArrowRightLeft, ArrowDownRight, ArrowUpRight, Scale, AlertCircle, History, Trash2 } from 'lucide-react';
 import { useWorkspace } from '../../context/WorkspaceContext';
 import { db } from '../../services/db';
+import { JournalEntry, Category, FinancialAccount } from '../../types';
+import { EditableSelect } from '../common/EditableSelect';
+import { toUuid } from '../../lib/uuid';
 
 interface NewTransactionModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSuccess: () => void;
+  onSuccess?: () => void;
+  entryToEdit?: JournalEntry | null;
+  defaultMode?: 'expense' | 'income' | 'transfer';
 }
 
 export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
   isOpen,
   onClose,
   onSuccess,
+  entryToEdit,
+  defaultMode,
 }) => {
-  const { currentWorkspace, formatMoney } = useWorkspace();
+  const { currentWorkspace, formatMoney, refreshData } = useWorkspace();
   const workspaceId = currentWorkspace?.id || '';
 
   const accounts = db.getAccounts(workspaceId).filter(a => !a.is_archived);
   const categories = db.getCategories(workspaceId);
-  const creditCards = db.getCreditCards(workspaceId);
 
-  const [mode, setMode] = useState<'expense' | 'income' | 'transfer' | 'custom'>('expense');
+  const [mode, setMode] = useState<'expense' | 'income' | 'transfer'>(defaultMode || 'expense');
   const [date, setDate] = useState<string>(new Date().toISOString().split('T')[0]);
   const [amount, setAmount] = useState<string>('');
   const [memo, setMemo] = useState<string>('');
@@ -29,23 +35,146 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
   const [destinationAccountId, setDestinationAccountId] = useState<string>('');
   const [categoryId, setCategoryId] = useState<string>('');
   const [counterparty, setCounterparty] = useState<string>('');
+  const [isHistorical, setIsHistorical] = useState<boolean>(false);
+  const [historicalNote, setHistoricalNote] = useState<string>('');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // Set reasonable defaults when modal opens
-  React.useEffect(() => {
-    if (accounts.length > 0 && !sourceAccountId) {
-      setSourceAccountId(accounts[0].id);
+  // Initialize or populate from entryToEdit
+  useEffect(() => {
+    if (!isOpen) return;
+
+    if (entryToEdit) {
+      setDate(entryToEdit.entry_date);
+      setMemo(entryToEdit.memo || '');
+      setIsHistorical(Boolean(entryToEdit.is_historical));
+      setHistoricalNote(entryToEdit.historical_note || '');
+
+      const lines = entryToEdit.lines || [];
+      const debitLine = lines.find(l => l.line_type === 'debit');
+      const creditLine = lines.find(l => l.line_type === 'credit');
+
+      if (debitLine) {
+        setAmount(debitLine.amount.toString());
+        setCounterparty(debitLine.counterparty || creditLine?.counterparty || '');
+      }
+
+      const linkedCatId = debitLine?.category_id || creditLine?.category_id;
+      if (linkedCatId) {
+        setCategoryId(linkedCatId);
+      }
+
+      if (entryToEdit.source_type === 'transfer') {
+        setMode('transfer');
+        setSourceAccountId(creditLine?.account_id || '');
+        setDestinationAccountId(debitLine?.account_id || '');
+      } else {
+        const cat = categories.find(c => c.id === linkedCatId);
+        if (cat?.type === 'income') {
+          setMode('income');
+          setDestinationAccountId(debitLine?.account_id || '');
+        } else {
+          setMode('expense');
+          setSourceAccountId(creditLine?.account_id || debitLine?.account_id || '');
+        }
+      }
+    } else {
+      // New transaction defaults
+      setDate(new Date().toISOString().split('T')[0]);
+      setAmount('');
+      setMemo('');
+      setCounterparty('');
+      setIsHistorical(false);
+      setHistoricalNote('');
+      setErrorMsg(null);
+
+      if (accounts.length > 0 && !sourceAccountId) {
+        setSourceAccountId(accounts[0].id);
+      }
+      if (accounts.length > 1 && !destinationAccountId) {
+        setDestinationAccountId(accounts[1].id);
+      }
+      const expenseCats = categories.filter(c => c.type === 'expense');
+      if (expenseCats.length > 0 && !categoryId) {
+        setCategoryId(expenseCats[0].id);
+      }
     }
-    if (accounts.length > 1 && !destinationAccountId) {
-      setDestinationAccountId(accounts[1].id);
-    }
-    const expenseCats = categories.filter(c => c.type === 'expense');
-    if (expenseCats.length > 0 && !categoryId) {
-      setCategoryId(expenseCats[0].id);
-    }
-  }, [accounts, categories]);
+  }, [isOpen, entryToEdit, accounts, categories]);
 
   if (!isOpen) return null;
+
+  // Inline Category Add / Edit handlers
+  const handleAddNewCategory = (name: string): string => {
+    const newCatId = toUuid(`cat_${workspaceId}_${Date.now()}`);
+    const newCat: Category = {
+      id: newCatId,
+      workspace_id: workspaceId,
+      name,
+      type: mode === 'income' ? 'income' : 'expense',
+      accounting_classification: mode === 'income' ? 'income_operating' : 'expense_operating',
+      icon: mode === 'income' ? 'plus-circle' : 'tag',
+      color: mode === 'income' ? '#10b981' : '#f97316',
+      is_seed: false,
+      is_archived: false,
+      sort_order: categories.length + 1,
+    };
+    db.saveCategory(newCat);
+    refreshData();
+    setCategoryId(newCatId);
+    return newCatId;
+  };
+
+  const handleEditCategory = (catId: string, updatedName: string) => {
+    const cat = categories.find(c => c.id === catId);
+    if (cat) {
+      db.saveCategory({ ...cat, name: updatedName });
+      refreshData();
+    }
+  };
+
+  // Inline Account Add / Edit handlers
+  const handleAddNewAccount = (name: string): string => {
+    const newAccId = toUuid(`acc_user_${workspaceId}_${Date.now()}`);
+    const newAcc: FinancialAccount = {
+      id: newAccId,
+      workspace_id: workspaceId,
+      name,
+      account_type_id: 'bank',
+      provider: 'Bank / Wallet',
+      currency: currentWorkspace?.currency || 'BDT',
+      opening_balance: 0,
+      opening_date: new Date().toISOString().split('T')[0],
+      current_balance_cached: 0,
+      is_archived: false,
+      icon: 'landmark',
+      color: '#0284c7',
+      created_at: new Date().toISOString(),
+    };
+    db.saveAccount(newAcc);
+    refreshData();
+    return newAccId;
+  };
+
+  const handleEditAccount = (accId: string, updatedName: string) => {
+    const acc = accounts.find(a => a.id === accId);
+    if (acc) {
+      db.saveAccount({ ...acc, name: updatedName });
+      refreshData();
+    }
+  };
+
+  const handleDeleteEntry = () => {
+    if (!entryToEdit) return;
+    if (window.confirm('Are you sure you want to delete this transaction from the database? Linked account balances will be restored.')) {
+      const res = db.deleteJournalEntry(workspaceId, entryToEdit.id);
+      if (res.success) {
+        refreshData();
+        onSuccess?.();
+        onClose();
+      } else {
+        setErrorMsg(res.error || 'Failed to delete transaction.');
+      }
+    }
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -62,83 +191,108 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
       return;
     }
 
+    const memoText = memo.trim();
+    const selectedCat = categories.find(c => c.id === categoryId);
+
     if (mode === 'expense') {
       if (!sourceAccountId) {
         setErrorMsg('Please select a payment account.');
         return;
       }
-      const selectedCat = categories.find(c => c.id === categoryId);
-      const memoText = memo.trim();
 
-      // Find or dynamically reference an Operating Expense account
-      // In double-entry:
-      // Debit: Expense (or Liability Reduction if loan repayment, or Asset Transfer if DPS)
-      // Credit: Liquid Asset (or Credit Card liability)
-      const res = db.postJournalEntry(workspaceId, {
-        memo: memoText,
-        source_type: 'manual',
-        entry_date: date,
-        lines: [
-          {
-            account_id: sourceAccountId,
-            line_type: 'credit',
-            amount: numAmount,
-            memo: memoText,
-            counterparty: counterparty.trim() || undefined,
-          },
-          {
-            // For ledger line, category_id provides the expense tag
-            account_id: sourceAccountId, // in simplified model, balanced against category entry
-            line_type: 'debit',
-            amount: numAmount,
-            memo: `${selectedCat?.name || 'Expense'}: ${memoText}`,
-            category_id: categoryId || undefined,
-            counterparty: counterparty.trim() || undefined,
-          },
-        ],
-      });
+      const lines = [
+        {
+          account_id: sourceAccountId,
+          line_type: 'credit' as const,
+          amount: numAmount,
+          memo: memoText,
+          counterparty: counterparty.trim() || undefined,
+        },
+        {
+          account_id: sourceAccountId,
+          line_type: 'debit' as const,
+          amount: numAmount,
+          memo: `${selectedCat?.name || 'Expense'}: ${memoText}`,
+          category_id: categoryId || undefined,
+          counterparty: counterparty.trim() || undefined,
+        },
+      ];
 
-      if (!res.success) {
-        setErrorMsg(res.error || 'Failed to post transaction.');
-        return;
+      if (entryToEdit) {
+        const res = db.updateJournalEntry(workspaceId, entryToEdit.id, {
+          memo: memoText,
+          entry_date: date,
+          is_historical: isHistorical,
+          historical_note: historicalNote.trim() || undefined,
+          lines,
+        });
+        if (!res.success) {
+          setErrorMsg(res.error || 'Failed to update transaction.');
+          return;
+        }
+      } else {
+        const res = db.postJournalEntry(workspaceId, {
+          memo: memoText,
+          source_type: 'manual',
+          entry_date: date,
+          is_historical: isHistorical,
+          historical_note: historicalNote.trim() || undefined,
+          lines,
+        });
+        if (!res.success) {
+          setErrorMsg(res.error || 'Failed to post transaction.');
+          return;
+        }
       }
     } else if (mode === 'income') {
       if (!destinationAccountId) {
         setErrorMsg('Please select a deposit destination account.');
         return;
       }
-      const selectedCat = categories.find(c => c.id === categoryId);
-      const memoText = memo.trim();
 
-      // Double-entry:
-      // Debit: Deposit Account (Asset increases)
-      // Credit: Income allocation
-      const res = db.postJournalEntry(workspaceId, {
-        memo: memoText,
-        source_type: 'manual',
-        entry_date: date,
-        lines: [
-          {
-            account_id: destinationAccountId,
-            line_type: 'debit',
-            amount: numAmount,
-            memo: memoText,
-            category_id: categoryId || undefined,
-            counterparty: counterparty.trim() || undefined,
-          },
-          {
-            account_id: destinationAccountId,
-            line_type: 'credit',
-            amount: numAmount,
-            memo: `${selectedCat?.name || 'Income'}: ${memoText}`,
-            counterparty: counterparty.trim() || undefined,
-          },
-        ],
-      });
+      const lines = [
+        {
+          account_id: destinationAccountId,
+          line_type: 'debit' as const,
+          amount: numAmount,
+          memo: memoText,
+          category_id: categoryId || undefined,
+          counterparty: counterparty.trim() || undefined,
+        },
+        {
+          account_id: destinationAccountId,
+          line_type: 'credit' as const,
+          amount: numAmount,
+          memo: `${selectedCat?.name || 'Income'}: ${memoText}`,
+          counterparty: counterparty.trim() || undefined,
+        },
+      ];
 
-      if (!res.success) {
-        setErrorMsg(res.error || 'Failed to post transaction.');
-        return;
+      if (entryToEdit) {
+        const res = db.updateJournalEntry(workspaceId, entryToEdit.id, {
+          memo: memoText,
+          entry_date: date,
+          is_historical: isHistorical,
+          historical_note: historicalNote.trim() || undefined,
+          lines,
+        });
+        if (!res.success) {
+          setErrorMsg(res.error || 'Failed to update transaction.');
+          return;
+        }
+      } else {
+        const res = db.postJournalEntry(workspaceId, {
+          memo: memoText,
+          source_type: 'manual',
+          entry_date: date,
+          is_historical: isHistorical,
+          historical_note: historicalNote.trim() || undefined,
+          lines,
+        });
+        if (!res.success) {
+          setErrorMsg(res.error || 'Failed to post transaction.');
+          return;
+        }
       }
     } else if (mode === 'transfer') {
       if (!sourceAccountId || !destinationAccountId) {
@@ -150,36 +304,83 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
         return;
       }
 
-      const res = db.postTransfer(
-        workspaceId,
-        sourceAccountId,
-        destinationAccountId,
-        numAmount,
-        date,
-        memo.trim()
-      );
-
-      if (!res.success) {
-        setErrorMsg(res.error || 'Failed to transfer.');
-        return;
+      if (entryToEdit) {
+        const lines = [
+          {
+            account_id: sourceAccountId,
+            line_type: 'credit' as const,
+            amount: numAmount,
+            memo: `Transfer to destination: ${memoText}`,
+          },
+          {
+            account_id: destinationAccountId,
+            line_type: 'debit' as const,
+            amount: numAmount,
+            memo: `Transfer from source: ${memoText}`,
+          },
+        ];
+        const res = db.updateJournalEntry(workspaceId, entryToEdit.id, {
+          memo: memoText,
+          entry_date: date,
+          is_historical: isHistorical,
+          historical_note: historicalNote.trim() || undefined,
+          lines,
+        });
+        if (!res.success) {
+          setErrorMsg(res.error || 'Failed to update transfer.');
+          return;
+        }
+      } else {
+        const res = db.postTransfer(
+          workspaceId,
+          sourceAccountId,
+          destinationAccountId,
+          numAmount,
+          date,
+          memoText
+        );
+        if (!res.success) {
+          setErrorMsg(res.error || 'Failed to post transfer.');
+          return;
+        }
       }
     }
 
-    onSuccess();
+    refreshData();
+    onSuccess?.();
     onClose();
   };
 
+  // Convert categories to SelectOptions
+  const activeCategories = mode === 'income' 
+    ? categories.filter(c => c.type === 'income')
+    : categories.filter(c => c.type === 'expense' || c.type === 'transfer_allocation');
+
+  const categoryOptions = activeCategories.map(c => ({
+    value: c.id,
+    label: c.name,
+    subLabel: c.type,
+    color: c.color,
+  }));
+
+  const accountOptions = accounts.map(a => ({
+    value: a.id,
+    label: a.name,
+    subLabel: formatMoney(a.current_balance_cached),
+    color: a.color,
+  }));
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 overflow-y-auto">
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-lg w-full p-6 shadow-2xl transition-all">
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-lg w-full p-6 shadow-2xl transition-all my-8">
         {/* Header */}
         <div className="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800">
           <div>
             <h3 className="text-base font-bold text-slate-900 dark:text-white">
-              Record Double-Entry Transaction
+              {entryToEdit ? 'Edit Transaction' : 'Record Transaction'}
             </h3>
             <p className="text-xs text-slate-500 dark:text-slate-400">
-              Every transaction is strictly balanced in the ledger.
+              Balanced double-entry accounting with real-time Supabase synchronization.
             </p>
           </div>
           <button
@@ -237,7 +438,7 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-3.5">
+        <form onSubmit={handleSubmit} className="space-y-4">
           {/* Amount & Date Grid */}
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -275,124 +476,79 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
             </div>
           </div>
 
-          {/* Accounts selection based on mode */}
+          {/* Accounts & Category with Inline Add & Edit Dropdowns */}
           {mode === 'expense' && (
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  Paid From (Credit Account)
-                </label>
-                <select
-                  value={sourceAccountId}
-                  onChange={(e) => setSourceAccountId(e.target.value)}
-                  className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500"
-                  required
-                >
-                  {accounts.map(acc => (
-                    <option key={acc.id} value={acc.id}>
-                      {acc.name} ({formatMoney(acc.current_balance_cached)})
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  Category (36 Seeded Options)
-                </label>
-                <select
-                  value={categoryId}
-                  onChange={(e) => setCategoryId(e.target.value)}
-                  className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500"
-                  required
-                >
-                  {categories.map(cat => (
-                    <option key={cat.id} value={cat.id}>
-                      {cat.name} ({cat.type})
-                    </option>
-                  ))}
-                </select>
-              </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <EditableSelect
+                label="Paid From (Account)"
+                options={accountOptions}
+                value={sourceAccountId}
+                onChange={setSourceAccountId}
+                onAddNew={handleAddNewAccount}
+                onEditSelected={handleEditAccount}
+                placeholder="Choose account"
+                required
+              />
+              <EditableSelect
+                label="Category"
+                options={categoryOptions}
+                value={categoryId}
+                onChange={setCategoryId}
+                onAddNew={handleAddNewCategory}
+                onEditSelected={handleEditCategory}
+                placeholder="Choose category"
+                required
+              />
             </div>
           )}
 
           {mode === 'income' && (
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  Deposit To (Debit Account)
-                </label>
-                <select
-                  value={destinationAccountId}
-                  onChange={(e) => setDestinationAccountId(e.target.value)}
-                  className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500"
-                  required
-                >
-                  {accounts.map(acc => (
-                    <option key={acc.id} value={acc.id}>
-                      {acc.name} ({formatMoney(acc.current_balance_cached)})
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  Income Category
-                </label>
-                <select
-                  value={categoryId}
-                  onChange={(e) => setCategoryId(e.target.value)}
-                  className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500"
-                  required
-                >
-                  {categories.filter(c => c.type === 'income').map(cat => (
-                    <option key={cat.id} value={cat.id}>
-                      {cat.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <EditableSelect
+                label="Deposit To (Account)"
+                options={accountOptions}
+                value={destinationAccountId}
+                onChange={setDestinationAccountId}
+                onAddNew={handleAddNewAccount}
+                onEditSelected={handleEditAccount}
+                placeholder="Choose destination"
+                required
+              />
+              <EditableSelect
+                label="Income Category"
+                options={categoryOptions}
+                value={categoryId}
+                onChange={setCategoryId}
+                onAddNew={handleAddNewCategory}
+                onEditSelected={handleEditCategory}
+                placeholder="Choose category"
+                required
+              />
             </div>
           )}
 
           {mode === 'transfer' && (
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  From Account (Source Asset)
-                </label>
-                <select
-                  value={sourceAccountId}
-                  onChange={(e) => setSourceAccountId(e.target.value)}
-                  className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500"
-                  required
-                >
-                  {accounts.map(acc => (
-                    <option key={acc.id} value={acc.id}>
-                      {acc.name} ({formatMoney(acc.current_balance_cached)})
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  To Account (Destination Asset)
-                </label>
-                <select
-                  value={destinationAccountId}
-                  onChange={(e) => setDestinationAccountId(e.target.value)}
-                  className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500"
-                  required
-                >
-                  {accounts.map(acc => (
-                    <option key={acc.id} value={acc.id}>
-                      {acc.name} ({formatMoney(acc.current_balance_cached)})
-                    </option>
-                  ))}
-                </select>
-              </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <EditableSelect
+                label="From Account (Source)"
+                options={accountOptions}
+                value={sourceAccountId}
+                onChange={setSourceAccountId}
+                onAddNew={handleAddNewAccount}
+                onEditSelected={handleEditAccount}
+                placeholder="Source account"
+                required
+              />
+              <EditableSelect
+                label="To Account (Destination)"
+                options={accountOptions}
+                value={destinationAccountId}
+                onChange={setDestinationAccountId}
+                onAddNew={handleAddNewAccount}
+                onEditSelected={handleEditAccount}
+                placeholder="Destination account"
+                required
+              />
             </div>
           )}
 
@@ -403,7 +559,7 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
             </label>
             <input
               type="text"
-              placeholder="e.g. Monthly Wi-Fi bill payment, Grocery shopping at Shwapno"
+              placeholder="e.g. Monthly Wi-Fi bill payment, Remote client contract invoice"
               value={memo}
               onChange={(e) => setMemo(e.target.value)}
               className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500"
@@ -414,15 +570,51 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
           {/* Counterparty / Payee / Vendor */}
           <div>
             <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-              Counterparty / Payee / Vendor (Optional)
+              Counterparty / Payee / Client (Optional)
             </label>
             <input
               type="text"
-              placeholder="e.g. Link3 Technologies, Shwapno Supermarket, Friend Name"
+              placeholder="e.g. Link3 Technologies, Shwapno Supermarket, Upwork Client"
               value={counterparty}
               onChange={(e) => setCounterparty(e.target.value)}
               className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500"
             />
+          </div>
+
+          {/* CRITICAL FEATURE: Historical / Previous Database Entry Toggle */}
+          <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700/80 space-y-2">
+            <label className="flex items-start gap-2.5 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={isHistorical}
+                onChange={(e) => setIsHistorical(e.target.checked)}
+                className="mt-0.5 rounded-sm border-slate-300 text-emerald-600 focus:ring-emerald-500"
+              />
+              <div>
+                <span className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                  <History className="w-3.5 h-3.5 text-amber-500" />
+                  <span>Prior Period / Previous Database Entry</span>
+                </span>
+                <p className="text-2xs text-slate-500 dark:text-slate-400 mt-0.5 leading-relaxed">
+                  Check this if this entry originates from your previous records or prior-year books. The date will not distort single-day spike velocity statistics, but will establish your cumulative past baseline and ledger equity.
+                </p>
+              </div>
+            </label>
+
+            {isHistorical && (
+              <div className="pt-2 border-t border-slate-200 dark:border-slate-700">
+                <label className="block text-2xs font-semibold text-slate-600 dark:text-slate-300 mb-1">
+                  Historical Period Note / Legacy Reference (Optional)
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. FY 2024-2025 Opening Balance, Previous Excel migration"
+                  value={historicalNote}
+                  onChange={(e) => setHistoricalNote(e.target.value)}
+                  className="w-full px-2.5 py-1.5 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white outline-hidden focus:border-amber-500"
+                />
+              </div>
+            )}
           </div>
 
           {/* Accounting Guardrail Callout */}
@@ -435,21 +627,36 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
             </span>
           </div>
 
-          {/* Submit */}
-          <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-2 text-xs font-medium text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              className="px-4 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-500 rounded-lg shadow-xs transition-colors"
-            >
-              Post to Ledger
-            </button>
+          {/* Submit & Delete Actions */}
+          <div className="flex items-center justify-between pt-3 border-t border-slate-100 dark:border-slate-800">
+            <div>
+              {entryToEdit && (
+                <button
+                  type="button"
+                  onClick={handleDeleteEntry}
+                  className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/60 rounded-lg transition-colors"
+                >
+                  <Trash2 className="w-4 h-4" />
+                  <span>Delete</span>
+                </button>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-4 py-2 text-xs font-medium text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="px-5 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-500 rounded-lg shadow-xs transition-colors"
+              >
+                {entryToEdit ? 'Update Transaction' : 'Post to Ledger'}
+              </button>
+            </div>
           </div>
         </form>
       </div>

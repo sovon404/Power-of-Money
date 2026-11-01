@@ -113,6 +113,8 @@ export interface JournalEntry {
   reversal_of_entry_id?: string;
   created_by?: string;
   posted_at?: string;
+  is_historical?: boolean;
+  historical_note?: string;
   created_at: string;
   lines?: JournalLine[];
 }

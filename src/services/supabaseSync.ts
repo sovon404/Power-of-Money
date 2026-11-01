@@ -253,7 +253,7 @@ class SupabaseSyncEngine {
       }
 
       // Upsert transaction header (omit identity column entry_number)
-      await supabase.from('journal_entries').upsert({
+      const entryPayload: any = {
         id: entryUuid,
         workspace_id: wsUuid,
         entry_date: entry.entry_date,
@@ -264,7 +264,22 @@ class SupabaseSyncEngine {
         is_reversal: Boolean(entry.is_reversal),
         created_by: userId ? userId : null,
         updated_at: new Date().toISOString(),
-      });
+      };
+      if (entry.is_historical !== undefined) {
+        entryPayload.is_historical = Boolean(entry.is_historical);
+      }
+      if (entry.historical_note !== undefined) {
+        entryPayload.historical_note = entry.historical_note || null;
+      }
+
+      try {
+        await supabase.from('journal_entries').upsert(entryPayload);
+      } catch (upsertErr) {
+        // Fallback without historical columns if migration not run yet
+        delete entryPayload.is_historical;
+        delete entryPayload.historical_note;
+        await supabase.from('journal_entries').upsert(entryPayload);
+      }
 
       // Upsert debit/credit lines
       if (entry.lines && entry.lines.length > 0) {
@@ -510,6 +525,101 @@ class SupabaseSyncEngine {
     } catch (err) {
       console.warn('Pull remote data notice:', err);
       return null;
+    }
+  }
+
+  // ==========================================
+  // Remote Deletion Operations
+  // ==========================================
+  async deleteJournalEntry(entryId: string, workspaceId: string) {
+    if (!this.isAvailable()) return;
+    const entryUuid = toUuid(entryId);
+    const wsUuid = toUuid(workspaceId);
+    try {
+      await supabase.from('journal_lines').delete().eq('journal_entry_id', entryUuid);
+      await supabase.from('journal_entries').delete().eq('id', entryUuid).eq('workspace_id', wsUuid);
+    } catch (err) {
+      console.warn('Delete journal entry error:', err);
+    }
+  }
+
+  async deleteCreditCard(cardId: string, workspaceId: string) {
+    if (!this.isAvailable()) return;
+    const cardUuid = toUuid(cardId);
+    const wsUuid = toUuid(workspaceId);
+    try {
+      await supabase.from('credit_cards').delete().eq('id', cardUuid).eq('workspace_id', wsUuid);
+    } catch (err) {
+      console.warn('Delete credit card error:', err);
+    }
+  }
+
+  async deleteAccount(accountId: string, workspaceId: string) {
+    if (!this.isAvailable()) return;
+    const accUuid = toUuid(accountId);
+    const wsUuid = toUuid(workspaceId);
+    try {
+      await supabase.from('financial_accounts').delete().eq('id', accUuid).eq('workspace_id', wsUuid);
+    } catch (err) {
+      console.warn('Delete account error:', err);
+    }
+  }
+
+  async deleteLoan(loanId: string, workspaceId: string) {
+    if (!this.isAvailable()) return;
+    const loanUuid = toUuid(loanId);
+    const wsUuid = toUuid(workspaceId);
+    try {
+      await supabase.from('loan_payments').delete().eq('loan_id', loanUuid);
+      await supabase.from('loans').delete().eq('id', loanUuid).eq('workspace_id', wsUuid);
+    } catch (err) {
+      console.warn('Delete loan error:', err);
+    }
+  }
+
+  async deleteProperty(propertyId: string, workspaceId: string) {
+    if (!this.isAvailable()) return;
+    const propUuid = toUuid(propertyId);
+    const wsUuid = toUuid(workspaceId);
+    try {
+      await supabase.from('property_recoveries').delete().eq('property_id', propUuid);
+      await supabase.from('property_valuations').delete().eq('property_id', propUuid);
+      await supabase.from('properties').delete().eq('id', propUuid).eq('workspace_id', wsUuid);
+    } catch (err) {
+      console.warn('Delete property error:', err);
+    }
+  }
+
+  async deleteBudget(budgetId: string, workspaceId: string) {
+    if (!this.isAvailable()) return;
+    const budgetUuid = toUuid(budgetId);
+    const wsUuid = toUuid(workspaceId);
+    try {
+      await supabase.from('budgets').delete().eq('id', budgetUuid).eq('workspace_id', wsUuid);
+    } catch (err) {
+      console.warn('Delete budget error:', err);
+    }
+  }
+
+  async deleteSavingsGoal(goalId: string, workspaceId: string) {
+    if (!this.isAvailable()) return;
+    const goalUuid = toUuid(goalId);
+    const wsUuid = toUuid(workspaceId);
+    try {
+      await supabase.from('savings_goals').delete().eq('id', goalUuid).eq('workspace_id', wsUuid);
+    } catch (err) {
+      console.warn('Delete savings goal error:', err);
+    }
+  }
+
+  async deleteCategory(categoryId: string, workspaceId: string) {
+    if (!this.isAvailable()) return;
+    const catUuid = toUuid(categoryId);
+    const wsUuid = toUuid(workspaceId);
+    try {
+      await supabase.from('categories').delete().eq('id', catUuid).eq('workspace_id', wsUuid);
+    } catch (err) {
+      console.warn('Delete category error:', err);
     }
   }
 }

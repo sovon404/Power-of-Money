@@ -12,7 +12,8 @@ import {
   Banknote,
   PiggyBank,
   TrendingUp,
-  AlertCircle
+  AlertCircle,
+  Trash2
 } from 'lucide-react';
 import { useWorkspace } from '../../context/WorkspaceContext';
 import { db } from '../../services/db';
@@ -47,6 +48,51 @@ export const AccountsView: React.FC = () => {
   const [transferDate, setTransferDate] = useState(new Date().toISOString().split('T')[0]);
   const [transferMemo, setTransferMemo] = useState('');
   const [transferError, setTransferError] = useState<string | null>(null);
+
+  // Edit Account Form state
+  const [editingAccount, setEditingAccount] = useState<FinancialAccount | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editProvider, setEditProvider] = useState('');
+  const [editMasked, setEditMasked] = useState('');
+  const [editBalance, setEditBalance] = useState('');
+  const [editNotes, setEditNotes] = useState('');
+  const [editColor, setEditColor] = useState('#0284c7');
+
+  const openEditModal = (acc: FinancialAccount) => {
+    setEditingAccount(acc);
+    setEditName(acc.name);
+    setEditProvider(acc.provider || '');
+    setEditMasked(acc.account_number_masked || '');
+    setEditBalance(acc.current_balance_cached.toString());
+    setEditNotes(acc.notes || '');
+    setEditColor(acc.color || '#0284c7');
+  };
+
+  const handleSaveEditAccount = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingAccount || !editName.trim()) return;
+
+    const updated: FinancialAccount = {
+      ...editingAccount,
+      name: editName.trim(),
+      provider: editProvider.trim(),
+      account_number_masked: editMasked.trim() || undefined,
+      current_balance_cached: parseFloat(editBalance) || 0,
+      notes: editNotes.trim() || undefined,
+      color: editColor,
+    };
+
+    db.saveAccount(updated);
+    refreshData();
+    setEditingAccount(null);
+  };
+
+  const handleDeleteAccount = (acc: FinancialAccount) => {
+    if (confirm(`Are you sure you want to delete account "${acc.name}"? This action cannot be undone.`)) {
+      db.deleteAccount(workspaceId, acc.id);
+      refreshData();
+    }
+  };
 
   const handleCreateAccount = (e: React.FormEvent) => {
     e.preventDefault();
@@ -232,13 +278,33 @@ export const AccountsView: React.FC = () => {
                     </div>
                   </div>
 
-                  <button
-                    onClick={() => toggleArchive(acc)}
-                    title="Archive Account"
-                    className="p-1 rounded-md text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
-                  >
-                    <Archive className="w-4 h-4" />
-                  </button>
+                  <div className="flex items-center gap-1">
+                    {canWrite && (
+                      <>
+                        <button
+                          onClick={() => openEditModal(acc)}
+                          title="Edit Account"
+                          className="p-1 rounded-md text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                        >
+                          <Edit3 className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => handleDeleteAccount(acc)}
+                          title="Delete Account"
+                          className="p-1 rounded-md text-rose-400 hover:text-rose-600"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </>
+                    )}
+                    <button
+                      onClick={() => toggleArchive(acc)}
+                      title="Archive Account"
+                      className="p-1 rounded-md text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                    >
+                      <Archive className="w-4 h-4" />
+                    </button>
+                  </div>
                 </div>
 
                 <div className="my-4">
@@ -555,6 +621,138 @@ export const AccountsView: React.FC = () => {
                 >
                   Execute Transfer
                 </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Account Modal */}
+      {editingAccount && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 overflow-y-auto">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-md w-full p-6 shadow-2xl">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800 mb-4">
+              <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                Edit Financial Account
+              </h3>
+              <button
+                onClick={() => setEditingAccount(null)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveEditAccount} className="space-y-3.5">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  Account Name
+                </label>
+                <input
+                  type="text"
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                  className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500"
+                  required
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Provider
+                  </label>
+                  <input
+                    type="text"
+                    value={editProvider}
+                    onChange={(e) => setEditProvider(e.target.value)}
+                    className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Masked Account #
+                  </label>
+                  <input
+                    type="text"
+                    value={editMasked}
+                    onChange={(e) => setEditMasked(e.target.value)}
+                    className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Current Balance ({currentWorkspace?.currency || 'BDT'})
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={editBalance}
+                    onChange={(e) => setEditBalance(e.target.value)}
+                    className="w-full px-3 py-2 text-xs font-mono rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Theme Color
+                  </label>
+                  <div className="flex items-center gap-2 mt-1">
+                    <input
+                      type="color"
+                      value={editColor}
+                      onChange={(e) => setEditColor(e.target.value)}
+                      className="w-8 h-8 rounded cursor-pointer border border-slate-300 dark:border-slate-700"
+                    />
+                    <span className="text-xs font-mono text-slate-500">{editColor}</span>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  Notes
+                </label>
+                <textarea
+                  rows={2}
+                  value={editNotes}
+                  onChange={(e) => setEditNotes(e.target.value)}
+                  className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                />
+              </div>
+
+              <div className="flex items-center justify-between pt-3 border-t border-slate-100 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (editingAccount) handleDeleteAccount(editingAccount);
+                    setEditingAccount(null);
+                  }}
+                  className="px-3 py-2 text-xs font-medium text-rose-600 hover:text-rose-700"
+                >
+                  Delete Account
+                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setEditingAccount(null)}
+                    className="px-3 py-2 text-xs font-medium text-slate-600 dark:text-slate-400"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-4 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-500 rounded-lg shadow-xs"
+                  >
+                    Save Changes
+                  </button>
+                </div>
               </div>
             </form>
           </div>

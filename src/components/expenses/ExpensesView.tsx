@@ -17,6 +17,7 @@ import {
 import { useWorkspace } from '../../context/WorkspaceContext';
 import { db } from '../../services/db';
 import { JournalEntry, FinancialAccount, Category } from '../../types';
+import { NewTransactionModal } from '../modals/NewTransactionModal';
 
 interface ExpensesViewProps {
   onOpenAiScan?: () => void;
@@ -133,7 +134,39 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
 
   // Top expense categories
   const sortedCategories = Object.values(categoryTotals).sort((a, b) => b.total - a.total);
-  const topCategory = sortedCategories[0] || { name: 'Personal (Food)', total: 0 };
+  const topCategory = sortedCategories[0] || { name: 'No Expense Logged', total: 0 };
+
+  // Calculate dominant payment channel dynamically
+  const channelCounts: Record<string, { label: string; count: number; total: number }> = {};
+  expenseRows.forEach(r => {
+    const key = r.channelName || 'Cash';
+    if (!channelCounts[key]) channelCounts[key] = { label: key, count: 0, total: 0 };
+    channelCounts[key].count += 1;
+    channelCounts[key].total += r.amount;
+  });
+  const dominantChannel = Object.values(channelCounts).sort((a, b) => b.total - a.total)[0] || {
+    label: 'None',
+    count: 0,
+    total: 0
+  };
+
+  const [entryToEdit, setEntryToEdit] = useState<JournalEntry | null>(null);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+
+  const handleEditEntry = (row: ExpenseRow) => {
+    const fullEntry = journalEntries.find(e => e.id === row.entryId);
+    if (fullEntry) {
+      setEntryToEdit(fullEntry);
+      setIsEditModalOpen(true);
+    }
+  };
+
+  const handleDeleteEntry = (row: ExpenseRow) => {
+    if (confirm(`Are you sure you want to delete this expense of ${formatMoney(row.amount)} (${row.memo})? This will balance and restore your account.`)) {
+      db.deleteJournalEntry(workspaceId, row.entryId);
+      refreshData();
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -145,7 +178,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
               Central Expense Hub
             </h2>
             <span className="px-2.5 py-0.5 rounded-full text-2xs font-semibold bg-rose-50 dark:bg-rose-950/70 text-rose-700 dark:text-rose-400 border border-rose-200 dark:border-rose-800">
-              36 Categories
+              {expenseCategories.length} Categories
             </span>
           </div>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
@@ -209,11 +242,11 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
           <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 block mb-1">
             Payment Channel Dominance
           </span>
-          <div className="text-xl font-bold text-slate-900 dark:text-white">
-            bKash &amp; Cash
+          <div className="text-xl font-bold text-slate-900 dark:text-white truncate">
+            {dominantChannel.label}
           </div>
           <p className="text-2xs text-slate-500 dark:text-slate-400 mt-1.5">
-            Micro-outflows processed via MFS
+            {dominantChannel.count > 0 ? `${dominantChannel.count} outflows (${formatMoney(dominantChannel.total)})` : 'No outflows logged yet'}
           </p>
         </div>
 
@@ -344,55 +377,101 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
                 <th className="py-3 px-4">Category</th>
                 <th className="py-3 px-4">Description / Memo</th>
                 <th className="py-3 px-4">Paid Via</th>
-                <th className="py-3 px-4 text-right">Amount (BDT)</th>
+                <th className="py-3 px-4 text-right">Amount ({currentWorkspace?.currency || 'BDT'})</th>
+                <th className="py-3 px-4 text-center">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-xs">
               {filteredRows.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="py-8 text-center text-slate-500 dark:text-slate-400">
+                  <td colSpan={6} className="py-8 text-center text-slate-500 dark:text-slate-400">
                     No expense records matching the active filters.
                   </td>
                 </tr>
               ) : (
-                filteredRows.map(row => (
-                  <tr key={row.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
-                    <td className="py-3 px-4 font-mono text-slate-500 whitespace-nowrap">
-                      {row.date}
-                    </td>
-                    <td className="py-3 px-4 whitespace-nowrap">
-                      <span className="px-2 py-0.5 rounded-full text-2xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
-                        {row.categoryName}
-                      </span>
-                    </td>
-                    <td className="py-3 px-4 text-slate-900 dark:text-slate-100 font-medium">
-                      {row.memo}
-                      {row.counterparty && (
-                        <span className="text-2xs text-slate-400 block">Vendor: {row.counterparty}</span>
-                      )}
-                    </td>
-                    <td className="py-3 px-4 text-slate-600 dark:text-slate-400 whitespace-nowrap">
-                      <div className="flex items-center gap-1.5">
-                        {row.channelType === 'credit_card' ? (
-                          <CreditCard className="w-3.5 h-3.5 text-rose-500" />
-                        ) : row.channelType === 'mfs' ? (
-                          <Smartphone className="w-3.5 h-3.5 text-pink-500" />
-                        ) : (
-                          <Wallet className="w-3.5 h-3.5 text-emerald-500" />
+                filteredRows.map(row => {
+                  const entry = journalEntries.find(e => e.id === row.entryId);
+                  return (
+                    <tr key={row.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
+                      <td className="py-3 px-4 font-mono text-slate-500 whitespace-nowrap">
+                        <div className="flex items-center gap-1.5">
+                          <span>{row.date}</span>
+                          {entry?.is_historical && (
+                            <span className="px-1.5 py-0.5 rounded text-3xs font-semibold bg-amber-100 text-amber-800 dark:bg-amber-900/60 dark:text-amber-200 border border-amber-300 dark:border-amber-700" title={entry.historical_note || 'Prior Period DB Entry'}>
+                              Prior DB
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="py-3 px-4 whitespace-nowrap">
+                        <span className="px-2 py-0.5 rounded-full text-2xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+                          {row.categoryName}
+                        </span>
+                      </td>
+                      <td className="py-3 px-4 text-slate-900 dark:text-slate-100 font-medium">
+                        {row.memo}
+                        {row.counterparty && (
+                          <span className="text-2xs text-slate-400 block">Vendor: {row.counterparty}</span>
                         )}
-                        <span>{row.channelName}</span>
-                      </div>
-                    </td>
-                    <td className="py-3 px-4 text-right font-mono font-bold text-rose-600 dark:text-rose-400 whitespace-nowrap tabular-nums">
-                      -{formatMoney(row.amount)}
-                    </td>
-                  </tr>
-                ))
+                      </td>
+                      <td className="py-3 px-4 text-slate-600 dark:text-slate-400 whitespace-nowrap">
+                        <div className="flex items-center gap-1.5">
+                          {row.channelType === 'credit_card' ? (
+                            <CreditCard className="w-3.5 h-3.5 text-rose-500" />
+                          ) : row.channelType === 'mfs' ? (
+                            <Smartphone className="w-3.5 h-3.5 text-pink-500" />
+                          ) : (
+                            <Wallet className="w-3.5 h-3.5 text-emerald-500" />
+                          )}
+                          <span>{row.channelName}</span>
+                        </div>
+                      </td>
+                      <td className="py-3 px-4 text-right font-mono font-bold text-rose-600 dark:text-rose-400 whitespace-nowrap tabular-nums">
+                        -{formatMoney(row.amount)}
+                      </td>
+                      <td className="py-3 px-4 text-center whitespace-nowrap">
+                        <div className="flex items-center justify-center gap-1.5">
+                          {canWrite && (
+                            <>
+                              <button
+                                onClick={() => handleEditEntry(row)}
+                                title="Edit Expense"
+                                className="px-2 py-1 text-2xs font-medium rounded-md bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 transition-colors"
+                              >
+                                Edit
+                              </button>
+                              <button
+                                onClick={() => handleDeleteEntry(row)}
+                                title="Delete Expense"
+                                className="px-2 py-1 text-2xs font-medium rounded-md bg-rose-50 dark:bg-rose-950/60 hover:bg-rose-100 text-rose-600 dark:text-rose-400 transition-colors"
+                              >
+                                Delete
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
         </div>
       </div>
+
+      {/* Edit Transaction Modal */}
+      {isEditModalOpen && entryToEdit && (
+        <NewTransactionModal
+          isOpen={isEditModalOpen}
+          onClose={() => {
+            setIsEditModalOpen(false);
+            setEntryToEdit(null);
+          }}
+          entryToEdit={entryToEdit}
+          defaultMode="expense"
+        />
+      )}
     </div>
   );
 };

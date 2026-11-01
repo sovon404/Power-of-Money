@@ -10,7 +10,9 @@ import {
   Percent, 
   X,
   Phone,
-  User
+  User,
+  Edit3,
+  Trash2
 } from 'lucide-react';
 import { useWorkspace } from '../../context/WorkspaceContext';
 import { db } from '../../services/db';
@@ -28,6 +30,48 @@ export const LoansView: React.FC = () => {
   const [showAddLoanModal, setShowAddLoanModal] = useState(false);
   const [showRepaymentModal, setShowRepaymentModal] = useState(false);
   const [selectedLoan, setSelectedLoan] = useState<Loan | null>(null);
+
+  // Edit Loan state
+  const [editingLoan, setEditingLoan] = useState<Loan | null>(null);
+  const [editTitle, setEditTitle] = useState('');
+  const [editCounterpartyName, setEditCounterpartyName] = useState('');
+  const [editCounterpartyPhone, setEditCounterpartyPhone] = useState('');
+  const [editCounterpartyRel, setEditCounterpartyRel] = useState('');
+  const [editNotes, setEditNotes] = useState('');
+
+  const openEditLoanModal = (loan: Loan) => {
+    setEditingLoan(loan);
+    setEditTitle(loan.title);
+    setEditCounterpartyName(loan.counterparty_name);
+    setEditCounterpartyPhone(loan.counterparty_phone || '');
+    setEditCounterpartyRel(loan.counterparty_relationship || '');
+    setEditNotes(loan.notes || '');
+  };
+
+  const handleSaveEditLoan = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingLoan || !editTitle.trim()) return;
+
+    const updated: Loan = {
+      ...editingLoan,
+      title: editTitle.trim(),
+      counterparty_name: editCounterpartyName.trim(),
+      counterparty_phone: editCounterpartyPhone.trim() || undefined,
+      counterparty_relationship: editCounterpartyRel.trim() || undefined,
+      notes: editNotes.trim() || undefined,
+    };
+
+    db.saveLoan(updated);
+    refreshData();
+    setEditingLoan(null);
+  };
+
+  const handleDeleteLoan = (loan: Loan) => {
+    if (confirm(`Are you sure you want to delete the loan "${loan.title}" (${loan.counterparty_name})?`)) {
+      db.deleteLoan(workspaceId, loan.id);
+      refreshData();
+    }
+  };
 
   // New Loan state
   const [loanType, setLoanType] = useState<'borrowed' | 'lent'>('borrowed');
@@ -405,13 +449,33 @@ export const LoansView: React.FC = () => {
                     </div>
                   </div>
 
-                  <span className={`text-2xs font-semibold px-2 py-0.5 rounded-full ${
-                    loan.status === 'fully_paid'
-                      ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300'
-                      : 'bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300'
-                  }`}>
-                    {loan.status === 'fully_paid' ? 'Fully Settled' : 'Active'}
-                  </span>
+                  <div className="flex items-center gap-1.5">
+                    <span className={`text-2xs font-semibold px-2 py-0.5 rounded-full ${
+                      loan.status === 'fully_paid'
+                        ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300'
+                        : 'bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300'
+                    }`}>
+                      {loan.status === 'fully_paid' ? 'Fully Settled' : 'Active'}
+                    </span>
+                    {canWrite && (
+                      <>
+                        <button
+                          onClick={() => openEditLoanModal(loan)}
+                          title="Edit Loan Details"
+                          className="p-1 rounded-md text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                        >
+                          <Edit3 className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          onClick={() => handleDeleteLoan(loan)}
+                          title="Delete Loan"
+                          className="p-1 rounded-md text-rose-400 hover:text-rose-600"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </>
+                    )}
+                  </div>
                 </div>
 
                 {/* Amounts Breakdown */}
@@ -722,6 +786,119 @@ export const LoansView: React.FC = () => {
                 >
                   Confirm &amp; Post to Ledger
                 </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Edit Loan Details Modal */}
+      {editingLoan && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 overflow-y-auto">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-md w-full p-6 shadow-2xl">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800 mb-4">
+              <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                Edit Loan Details
+              </h3>
+              <button
+                onClick={() => setEditingLoan(null)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-700"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveEditLoan} className="space-y-3.5">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  Title / Reason
+                </label>
+                <input
+                  type="text"
+                  value={editTitle}
+                  onChange={(e) => setEditTitle(e.target.value)}
+                  className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  Counterparty / Person Name
+                </label>
+                <input
+                  type="text"
+                  value={editCounterpartyName}
+                  onChange={(e) => setEditCounterpartyName(e.target.value)}
+                  className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                  required
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Phone #
+                  </label>
+                  <input
+                    type="text"
+                    value={editCounterpartyPhone}
+                    onChange={(e) => setEditCounterpartyPhone(e.target.value)}
+                    className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Relationship
+                  </label>
+                  <input
+                    type="text"
+                    value={editCounterpartyRel}
+                    onChange={(e) => setEditCounterpartyRel(e.target.value)}
+                    className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  Notes
+                </label>
+                <textarea
+                  rows={2}
+                  value={editNotes}
+                  onChange={(e) => setEditNotes(e.target.value)}
+                  className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                />
+              </div>
+
+              <div className="flex items-center justify-between pt-3 border-t border-slate-100 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (editingLoan) handleDeleteLoan(editingLoan);
+                    setEditingLoan(null);
+                  }}
+                  className="px-3 py-2 text-xs font-medium text-rose-600 hover:text-rose-700"
+                >
+                  Delete Loan
+                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setEditingLoan(null)}
+                    className="px-3 py-2 text-xs font-medium text-slate-600 dark:text-slate-400"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-4 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-500 rounded-lg shadow-xs"
+                  >
+                    Save Changes
+                  </button>
+                </div>
               </div>
             </form>
           </div>

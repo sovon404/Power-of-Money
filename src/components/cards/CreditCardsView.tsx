@@ -10,13 +10,16 @@ import {
   DollarSign,
   AlertTriangle,
   X,
-  CheckCircle2
+  CheckCircle2,
+  Edit2,
+  Trash2
 } from 'lucide-react';
 import { useWorkspace } from '../../context/WorkspaceContext';
 import { db } from '../../services/db';
-import { CreditCard, FinancialAccount } from '../../types';
+import { CreditCard, FinancialAccount, JournalEntry } from '../../types';
 import { toUuid } from '../../lib/uuid';
 import { supabaseSync } from '../../services/supabaseSync';
+import { NewTransactionModal } from '../modals/NewTransactionModal';
 
 export const CreditCardsView: React.FC = () => {
   const { currentWorkspace, formatMoney, refreshData, canWrite } = useWorkspace();
@@ -60,6 +63,87 @@ export const CreditCardsView: React.FC = () => {
   const categories = db.getCategories(workspaceId);
   const expenseCategories = categories.filter(c => c.type === 'expense');
   const journalEntries = db.getJournalEntries(workspaceId);
+
+  // Edit Card Form state
+  const [showEditCardModal, setShowEditCardModal] = useState(false);
+  const [editingCard, setEditingCard] = useState<CreditCard | null>(null);
+  const [editCardName, setEditCardName] = useState('');
+  const [editIssuingBank, setEditIssuingBank] = useState('');
+  const [editCardNetwork, setEditCardNetwork] = useState<'Visa' | 'Mastercard' | 'Amex'>('Visa');
+  const [editLastFour, setEditLastFour] = useState('');
+  const [editCreditLimit, setEditCreditLimit] = useState('');
+  const [editStatementDay, setEditStatementDay] = useState('15');
+  const [editDueDay, setEditDueDay] = useState('5');
+  const [editApr, setEditApr] = useState('20.0');
+  const [editAnnualFee, setEditAnnualFee] = useState('0');
+
+  // Edit / Delete Ledger Transaction Modal state
+  const [editingTxEntry, setEditingTxEntry] = useState<JournalEntry | null>(null);
+  const [showTxModal, setShowTxModal] = useState(false);
+
+  const handleOpenEditCard = (card: CreditCard) => {
+    setEditingCard(card);
+    setEditCardName(card.card_name);
+    setEditIssuingBank(card.issuing_bank);
+    setEditCardNetwork((card.card_network as any) || 'Visa');
+    setEditLastFour(card.last_four_digits);
+    setEditCreditLimit(card.credit_limit.toString());
+    setEditStatementDay(card.statement_day.toString());
+    setEditDueDay(card.payment_due_day.toString());
+    setEditApr((card.interest_rate_apr ?? 20).toString());
+    setEditAnnualFee((card.annual_fee ?? 0).toString());
+    setShowEditCardModal(true);
+  };
+
+  const handleSaveEditCard = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingCard) return;
+
+    const updatedCard: CreditCard = {
+      ...editingCard,
+      card_name: editCardName.trim(),
+      issuing_bank: editIssuingBank.trim(),
+      card_network: editCardNetwork,
+      last_four_digits: editLastFour.trim(),
+      credit_limit: parseFloat(editCreditLimit) || 0,
+      statement_day: parseInt(editStatementDay, 10) || 15,
+      payment_due_day: parseInt(editDueDay, 10) || 5,
+      interest_rate_apr: parseFloat(editApr) || 0,
+      annual_fee: parseFloat(editAnnualFee) || 0,
+    };
+
+    db.saveCreditCard(updatedCard);
+    await supabaseSync.syncCreditCard(updatedCard, workspaceId);
+
+    // Also update liability account name if present
+    const liabAcc = accounts.find(a => a.id === editingCard.account_id);
+    if (liabAcc) {
+      db.saveAccount({
+        ...liabAcc,
+        name: `${editCardName.trim()} (${editIssuingBank.trim()} •••• ${editLastFour.trim()})`,
+        provider: editIssuingBank.trim(),
+        account_number_masked: `•••• ${editLastFour.trim()}`,
+      });
+    }
+
+    refreshData();
+    setShowEditCardModal(false);
+    setEditingCard(null);
+  };
+
+  const handleDeleteCard = (card: CreditCard) => {
+    if (window.confirm(`Are you sure you want to delete ${card.card_name} (•••• ${card.last_four_digits})? This will remove the card and its linked liability account from the database.`)) {
+      db.deleteCreditCard(card.id, workspaceId);
+      refreshData();
+    }
+  };
+
+  const handleDeleteLedgerItem = (journalEntryId: string) => {
+    if (window.confirm('Are you sure you want to delete this credit card transaction from the database? Account and card balances will be restored.')) {
+      db.deleteJournalEntry(workspaceId, journalEntryId);
+      refreshData();
+    }
+  };
 
   const handleAddCard = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -277,9 +361,31 @@ export const CreditCardsView: React.FC = () => {
                     <span className="text-xs font-mono tracking-widest text-slate-400">
                       {card.issuing_bank}
                     </span>
-                    <span className="text-xs font-bold uppercase tracking-wider text-slate-200">
-                      {card.card_network}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold uppercase tracking-wider text-slate-200">
+                        {card.card_network}
+                      </span>
+                      {canWrite && (
+                        <div className="flex items-center gap-1 bg-slate-800/80 rounded-lg p-0.5 border border-slate-700/80">
+                          <button
+                            type="button"
+                            onClick={() => handleOpenEditCard(card)}
+                            title="Edit Card Details"
+                            className="p-1 rounded text-slate-300 hover:text-white hover:bg-slate-700 transition-colors"
+                          >
+                            <Edit2 className="w-3 h-3" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteCard(card)}
+                            title="Delete Card"
+                            className="p-1 rounded text-rose-400 hover:text-rose-200 hover:bg-rose-950/80 transition-colors"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        </div>
+                      )}
+                    </div>
                   </div>
 
                   <div className="flex items-center gap-2 text-lg font-mono tracking-widest my-3 text-slate-200">
@@ -395,6 +501,7 @@ export const CreditCardsView: React.FC = () => {
 
           interface CardLedgerItem {
             id: string;
+            journalEntryId: string;
             date: string;
             memo: string;
             type: 'charge' | 'payment';
@@ -430,6 +537,7 @@ export const CreditCardsView: React.FC = () => {
 
                   items.push({
                     id: line.id,
+                    journalEntryId: entry.id,
                     date: entry.entry_date,
                     memo: entry.memo,
                     type: 'charge',
@@ -446,6 +554,7 @@ export const CreditCardsView: React.FC = () => {
 
                   items.push({
                     id: line.id,
+                    journalEntryId: entry.id,
                     date: entry.entry_date,
                     memo: entry.memo,
                     type: 'payment',
@@ -503,12 +612,13 @@ export const CreditCardsView: React.FC = () => {
                         <th className="py-2.5 px-4">Card</th>
                         <th className="py-2.5 px-4">Description / Linked Category</th>
                         <th className="py-2.5 px-4 text-right">In-Out Amount</th>
+                        <th className="py-2.5 px-4 text-right">Actions</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-xs">
                       {items.length === 0 ? (
                         <tr>
-                          <td colSpan={5} className="py-6 text-center text-slate-400">
+                          <td colSpan={6} className="py-6 text-center text-slate-400">
                             No credit card swipes or settlements recorded yet. Use &ldquo;+ Charge Expense&rdquo; above to log a card swipe.
                           </td>
                         </tr>
@@ -536,6 +646,32 @@ export const CreditCardsView: React.FC = () => {
                               item.type === 'charge' ? 'text-rose-600 dark:text-rose-400' : 'text-emerald-600 dark:text-emerald-400'
                             }`}>
                               {item.type === 'charge' ? `+${formatMoney(item.amount)}` : `-${formatMoney(item.amount)}`}
+                            </td>
+                            <td className="py-2.5 px-4 text-right whitespace-nowrap">
+                              <div className="flex items-center justify-end gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const found = journalEntries.find(e => e.id === item.journalEntryId);
+                                    if (found) {
+                                      setEditingTxEntry(found);
+                                      setShowTxModal(true);
+                                    }
+                                  }}
+                                  title="Edit Transaction"
+                                  className="p-1 rounded-md text-slate-400 hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors"
+                                >
+                                  <Edit2 className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteLedgerItem(item.journalEntryId)}
+                                  title="Delete Transaction"
+                                  className="p-1 rounded-md text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 transition-colors"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
                             </td>
                           </tr>
                         ))
@@ -926,6 +1062,195 @@ export const CreditCardsView: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Edit Card Modal */}
+      {showEditCardModal && editingCard && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 overflow-y-auto">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-md w-full p-6 shadow-2xl">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800 mb-4">
+              <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                Edit Credit Card
+              </h3>
+              <button
+                onClick={() => setShowEditCardModal(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-700"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveEditCard} className="space-y-3.5">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  Card Nickname / Display Name
+                </label>
+                <input
+                  type="text"
+                  value={editCardName}
+                  onChange={(e) => setEditCardName(e.target.value)}
+                  className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                  required
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Issuing Bank / Entity
+                  </label>
+                  <input
+                    type="text"
+                    value={editIssuingBank}
+                    onChange={(e) => setEditIssuingBank(e.target.value)}
+                    className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Network
+                  </label>
+                  <select
+                    value={editCardNetwork}
+                    onChange={(e) => setEditCardNetwork(e.target.value as any)}
+                    className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                  >
+                    <option value="Visa">Visa</option>
+                    <option value="Mastercard">Mastercard</option>
+                    <option value="Amex">American Express</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Last 4 Digits
+                  </label>
+                  <input
+                    type="text"
+                    maxLength={4}
+                    value={editLastFour}
+                    onChange={(e) => setEditLastFour(e.target.value)}
+                    className="w-full px-3 py-2 text-xs font-mono rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Credit Limit (BDT ৳)
+                  </label>
+                  <input
+                    type="number"
+                    step="1"
+                    value={editCreditLimit}
+                    onChange={(e) => setEditCreditLimit(e.target.value)}
+                    className="w-full px-3 py-2 text-xs font-mono font-semibold rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Statement Day (1-31)
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="31"
+                    value={editStatementDay}
+                    onChange={(e) => setEditStatementDay(e.target.value)}
+                    className="w-full px-3 py-2 text-xs font-mono rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Payment Due Day (1-31)
+                  </label>
+                  <input
+                    type="number"
+                    min="1"
+                    max="31"
+                    value={editDueDay}
+                    onChange={(e) => setEditDueDay(e.target.value)}
+                    className="w-full px-3 py-2 text-xs font-mono rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Interest APR (%)
+                  </label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={editApr}
+                    onChange={(e) => setEditApr(e.target.value)}
+                    className="w-full px-3 py-2 text-xs font-mono rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Annual Fee (BDT ৳)
+                  </label>
+                  <input
+                    type="number"
+                    step="1"
+                    value={editAnnualFee}
+                    onChange={(e) => setEditAnnualFee(e.target.value)}
+                    className="w-full px-3 py-2 text-xs font-mono rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                  />
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between pt-3 border-t border-slate-100 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleDeleteCard(editingCard);
+                    setShowEditCardModal(false);
+                  }}
+                  className="px-3 py-2 text-xs font-semibold text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/60 rounded-lg flex items-center gap-1.5 transition-colors"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                  <span>Delete Card</span>
+                </button>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowEditCardModal(false)}
+                    className="px-3 py-2 text-xs font-medium text-slate-600 dark:text-slate-400"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="px-4 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-500 rounded-lg shadow-xs"
+                  >
+                    Save Changes
+                  </button>
+                </div>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Global Transaction Modal for editing ledger swipes/settlements */}
+      <NewTransactionModal
+        isOpen={showTxModal}
+        entryToEdit={editingTxEntry}
+        onClose={() => {
+          setShowTxModal(false);
+          setEditingTxEntry(null);
+        }}
+        onSuccess={refreshData}
+      />
     </div>
   );
 };

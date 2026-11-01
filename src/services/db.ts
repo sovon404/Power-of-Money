@@ -278,6 +278,12 @@ class DatabaseEngine {
     supabaseSync.syncAccount(account, account.workspace_id);
   }
 
+  deleteAccount(accountId: string, workspaceId: string): void {
+    const list = this.get<FinancialAccount[]>(STORAGE_KEYS.ACCOUNTS, []);
+    this.set(STORAGE_KEYS.ACCOUNTS, list.filter(a => a.id !== accountId));
+    supabaseSync.deleteAccount(accountId, workspaceId);
+  }
+
   // Journal Entries & Lines
   getJournalEntries(workspaceId: string): JournalEntry[] {
     const entries = this.get<JournalEntry[]>(STORAGE_KEYS.JOURNAL_ENTRIES, []);
@@ -303,6 +309,8 @@ class DatabaseEngine {
       source_type: JournalEntry['source_type'];
       source_id?: string;
       entry_date: string;
+      is_historical?: boolean;
+      historical_note?: string;
       lines: Array<{
         account_id: string;
         line_type: 'debit' | 'credit';
@@ -348,6 +356,8 @@ class DatabaseEngine {
       source_id: params.source_id,
       status: 'posted',
       is_reversal: false,
+      is_historical: Boolean(params.is_historical),
+      historical_note: params.historical_note,
       posted_at: new Date().toISOString(),
       created_at: new Date().toISOString(),
     };
@@ -391,9 +401,163 @@ class DatabaseEngine {
       memo: params.memo,
       amount: totalDebit,
       source_type: params.source_type,
+      is_historical: params.is_historical,
     });
 
     return { success: true, entryId };
+  }
+
+  /**
+   * Update an existing Journal Entry (Atomic rollback of previous lines + application of new lines)
+   */
+  updateJournalEntry(
+    workspaceId: string,
+    entryId: string,
+    params: {
+      memo: string;
+      entry_date: string;
+      is_historical?: boolean;
+      historical_note?: string;
+      lines: Array<{
+        account_id: string;
+        line_type: 'debit' | 'credit';
+        amount: number;
+        memo?: string;
+        category_id?: string;
+        counterparty?: string;
+        tags?: string[];
+      }>;
+    }
+  ): { success: boolean; error?: string } {
+    const totalDebit = params.lines
+      .filter(l => l.line_type === 'debit')
+      .reduce((sum, l) => sum + Number(l.amount), 0);
+    const totalCredit = params.lines
+      .filter(l => l.line_type === 'credit')
+      .reduce((sum, l) => sum + Number(l.amount), 0);
+
+    if (Math.abs(totalDebit - totalCredit) > 0.001) {
+      return {
+        success: false,
+        error: `Unbalanced journal entry rejected. Total debits (${totalDebit.toFixed(2)}) must equal total credits (${totalCredit.toFixed(2)}).`,
+      };
+    }
+
+    const currentEntries = this.get<JournalEntry[]>(STORAGE_KEYS.JOURNAL_ENTRIES, []);
+    const currentLines = this.get<JournalLine[]>(STORAGE_KEYS.JOURNAL_LINES, []);
+    const accounts = this.get<FinancialAccount[]>(STORAGE_KEYS.ACCOUNTS, []);
+
+    const existingEntryIndex = currentEntries.findIndex(e => e.id === entryId);
+    if (existingEntryIndex === -1) {
+      return { success: false, error: 'Journal entry not found.' };
+    }
+
+    const existingEntry = currentEntries[existingEntryIndex];
+    const oldLines = currentLines.filter(l => l.journal_entry_id === entryId);
+
+    // 1. Rollback old line effects on accounts
+    for (const oldLine of oldLines) {
+      const acc = accounts.find(a => a.id === oldLine.account_id);
+      if (acc) {
+        const isDebitNormal = ['cash', 'bank', 'mfs', 'savings_dps', 'investment', 'receivable', 'property_asset', 'expense_operating', 'expense_finance'].includes(acc.account_type_id);
+        const change = oldLine.line_type === 'debit' ? -oldLine.amount : oldLine.amount;
+        acc.current_balance_cached = isDebitNormal
+          ? acc.current_balance_cached + change
+          : acc.current_balance_cached - change;
+      }
+    }
+
+    // 2. Generate new lines
+    const defaultOperatingAccId = toUuid(`acc_expense_operating_${workspaceId}`);
+    const updatedLines: JournalLine[] = params.lines.map((l) => ({
+      id: generateUuid(),
+      journal_entry_id: entryId,
+      workspace_id: workspaceId,
+      account_id: l.account_id && l.account_id.trim() !== '' ? l.account_id : defaultOperatingAccId,
+      line_type: l.line_type,
+      amount: Number(l.amount),
+      memo: l.memo || params.memo,
+      category_id: l.category_id,
+      counterparty: l.counterparty,
+      tags: l.tags || [],
+      created_at: new Date().toISOString(),
+    }));
+
+    // 3. Apply new line effects on accounts
+    for (const line of updatedLines) {
+      const acc = accounts.find(a => a.id === line.account_id);
+      if (acc) {
+        const isDebitNormal = ['cash', 'bank', 'mfs', 'savings_dps', 'investment', 'receivable', 'property_asset', 'expense_operating', 'expense_finance'].includes(acc.account_type_id);
+        const change = line.line_type === 'debit' ? line.amount : -line.amount;
+        acc.current_balance_cached = isDebitNormal
+          ? acc.current_balance_cached + change
+          : acc.current_balance_cached - change;
+        supabaseSync.syncAccount(acc, workspaceId);
+      }
+    }
+
+    // 4. Update entry object
+    const updatedEntry: JournalEntry = {
+      ...existingEntry,
+      memo: params.memo,
+      entry_date: params.entry_date,
+      is_historical: params.is_historical !== undefined ? Boolean(params.is_historical) : existingEntry.is_historical,
+      historical_note: params.historical_note !== undefined ? params.historical_note : existingEntry.historical_note,
+      lines: updatedLines,
+    };
+
+    currentEntries[existingEntryIndex] = updatedEntry;
+    const remainingLines = currentLines.filter(l => l.journal_entry_id !== entryId);
+
+    this.set(STORAGE_KEYS.JOURNAL_ENTRIES, currentEntries);
+    this.set(STORAGE_KEYS.JOURNAL_LINES, [...remainingLines, ...updatedLines]);
+    this.set(STORAGE_KEYS.ACCOUNTS, accounts);
+
+    // Sync to Supabase
+    supabaseSync.syncJournalEntry(updatedEntry, workspaceId);
+    this.logAudit(workspaceId, 'UPDATE_JOURNAL_ENTRY', 'journal_entry', entryId, { memo: params.memo });
+
+    return { success: true };
+  }
+
+  /**
+   * Delete a Journal Entry completely (reverts account balances and removes entry & lines)
+   */
+  deleteJournalEntry(workspaceId: string, entryId: string): { success: boolean; error?: string } {
+    const currentEntries = this.get<JournalEntry[]>(STORAGE_KEYS.JOURNAL_ENTRIES, []);
+    const currentLines = this.get<JournalLine[]>(STORAGE_KEYS.JOURNAL_LINES, []);
+    const accounts = this.get<FinancialAccount[]>(STORAGE_KEYS.ACCOUNTS, []);
+
+    const entryToDelete = currentEntries.find(e => e.id === entryId);
+    if (!entryToDelete) {
+      return { success: false, error: 'Transaction not found.' };
+    }
+
+    const linesToDelete = currentLines.filter(l => l.journal_entry_id === entryId);
+
+    // Revert account balances
+    for (const line of linesToDelete) {
+      const acc = accounts.find(a => a.id === line.account_id);
+      if (acc) {
+        const isDebitNormal = ['cash', 'bank', 'mfs', 'savings_dps', 'investment', 'receivable', 'property_asset', 'expense_operating', 'expense_finance'].includes(acc.account_type_id);
+        const change = line.line_type === 'debit' ? -line.amount : line.amount;
+        acc.current_balance_cached = isDebitNormal
+          ? acc.current_balance_cached + change
+          : acc.current_balance_cached - change;
+        supabaseSync.syncAccount(acc, workspaceId);
+      }
+    }
+
+    // Remove entry and lines from local storage
+    this.set(STORAGE_KEYS.JOURNAL_ENTRIES, currentEntries.filter(e => e.id !== entryId));
+    this.set(STORAGE_KEYS.JOURNAL_LINES, currentLines.filter(l => l.journal_entry_id !== entryId));
+    this.set(STORAGE_KEYS.ACCOUNTS, accounts);
+
+    // Sync deletion to Supabase
+    supabaseSync.deleteJournalEntry(entryId, workspaceId);
+    this.logAudit(workspaceId, 'DELETE_JOURNAL_ENTRY', 'journal_entry', entryId, { memo: entryToDelete.memo });
+
+    return { success: true };
   }
 
   /**
@@ -494,6 +658,12 @@ class DatabaseEngine {
     supabaseSync.syncCategory(cat, cat.workspace_id);
   }
 
+  deleteCategory(categoryId: string, workspaceId: string): void {
+    const list = this.get<Category[]>(STORAGE_KEYS.CATEGORIES, []);
+    this.set(STORAGE_KEYS.CATEGORIES, list.filter(c => c.id !== categoryId));
+    supabaseSync.deleteCategory(categoryId, workspaceId);
+  }
+
   // Credit Cards
   getCreditCards(workspaceId: string): CreditCard[] {
     const list = this.get<CreditCard[]>(STORAGE_KEYS.CREDIT_CARDS, []);
@@ -510,6 +680,18 @@ class DatabaseEngine {
     }
     this.set(STORAGE_KEYS.CREDIT_CARDS, list);
     supabaseSync.syncCreditCard(card, card.workspace_id);
+  }
+
+  deleteCreditCard(cardId: string, workspaceId: string): void {
+    const list = this.get<CreditCard[]>(STORAGE_KEYS.CREDIT_CARDS, []);
+    const cardToDelete = list.find(c => c.id === cardId);
+    this.set(STORAGE_KEYS.CREDIT_CARDS, list.filter(c => c.id !== cardId));
+    supabaseSync.deleteCreditCard(cardId, workspaceId);
+
+    // Also remove or archive underlying liability account if user deletes card
+    if (cardToDelete?.account_id) {
+      this.deleteAccount(cardToDelete.account_id, workspaceId);
+    }
   }
 
   // Loans & Money Lent
@@ -530,6 +712,12 @@ class DatabaseEngine {
     supabaseSync.syncLoan(loan, loan.workspace_id);
   }
 
+  deleteLoan(loanId: string, workspaceId: string): void {
+    const list = this.get<Loan[]>(STORAGE_KEYS.LOANS, []);
+    this.set(STORAGE_KEYS.LOANS, list.filter(l => l.id !== loanId));
+    supabaseSync.deleteLoan(loanId, workspaceId);
+  }
+
   // Properties
   getProperties(workspaceId: string): Property[] {
     const list = this.get<Property[]>(STORAGE_KEYS.PROPERTIES, []);
@@ -546,6 +734,12 @@ class DatabaseEngine {
     }
     this.set(STORAGE_KEYS.PROPERTIES, list);
     supabaseSync.syncProperty(prop, prop.workspace_id);
+  }
+
+  deleteProperty(propertyId: string, workspaceId: string): void {
+    const list = this.get<Property[]>(STORAGE_KEYS.PROPERTIES, []);
+    this.set(STORAGE_KEYS.PROPERTIES, list.filter(p => p.id !== propertyId));
+    supabaseSync.deleteProperty(propertyId, workspaceId);
   }
 
   // Budgets
@@ -566,6 +760,12 @@ class DatabaseEngine {
     supabaseSync.syncBudget(budget, budget.workspace_id);
   }
 
+  deleteBudget(budgetId: string, workspaceId: string): void {
+    const list = this.get<Budget[]>(STORAGE_KEYS.BUDGETS, []);
+    this.set(STORAGE_KEYS.BUDGETS, list.filter(b => b.id !== budgetId));
+    supabaseSync.deleteBudget(budgetId, workspaceId);
+  }
+
   // Savings Goals & DPS
   getSavingsGoals(workspaceId: string): SavingsGoal[] {
     const list = this.get<SavingsGoal[]>(STORAGE_KEYS.SAVINGS_GOALS, []);
@@ -582,6 +782,12 @@ class DatabaseEngine {
     }
     this.set(STORAGE_KEYS.SAVINGS_GOALS, list);
     supabaseSync.syncSavingsGoal(goal, goal.workspace_id);
+  }
+
+  deleteSavingsGoal(goalId: string, workspaceId: string): void {
+    const list = this.get<SavingsGoal[]>(STORAGE_KEYS.SAVINGS_GOALS, []);
+    this.set(STORAGE_KEYS.SAVINGS_GOALS, list.filter(g => g.id !== goalId));
+    supabaseSync.deleteSavingsGoal(goalId, workspaceId);
   }
 
   // Recurring Rules

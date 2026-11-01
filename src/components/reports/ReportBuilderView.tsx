@@ -1,37 +1,32 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { 
-  BarChart3, 
   Download, 
-  Filter, 
   Calendar, 
   FileSpreadsheet, 
   TrendingUp, 
-  ShieldCheck,
-  Zap,
-  Activity,
-  Layers,
-  ArrowUpRight,
-  ArrowDownRight,
-  Sparkles,
-  PieChart as PieIcon
+  Layers, 
+  ArrowUpRight, 
+  ArrowDownRight, 
+  Printer, 
+  PieChart as PieIcon,
+  BarChart3,
+  History,
+  CheckCircle2,
+  Filter
 } from 'lucide-react';
 import { 
-  AreaChart, 
-  Area, 
+  ResponsiveContainer, 
+  BarChart, 
+  Bar, 
   XAxis, 
   YAxis, 
   CartesianGrid, 
   Tooltip, 
-  ResponsiveContainer, 
-  BarChart, 
-  Bar, 
-  Legend, 
-  PieChart, 
-  Pie, 
-  Cell 
+  Legend 
 } from 'recharts';
 import { useWorkspace } from '../../context/WorkspaceContext';
 import { db } from '../../services/db';
+import { JournalEntry } from '../../types';
 
 export const ReportBuilderView: React.FC = () => {
   const { currentWorkspace, formatMoney } = useWorkspace();
@@ -40,435 +35,563 @@ export const ReportBuilderView: React.FC = () => {
   const accounts = db.getAccounts(workspaceId);
   const categories = db.getCategories(workspaceId);
   const entries = db.getJournalEntries(workspaceId);
-  const loans = db.getLoans(workspaceId);
-  const properties = db.getProperties(workspaceId);
 
-  const [dateRange, setDateRange] = useState<'this_month' | 'last_month' | 'this_year' | 'all'>('this_year');
-  const [activeChartTab, setActiveChartTab] = useState<'velocity' | 'allocation' | 'net_worth'>('velocity');
+  // Date Range and Filter state
+  const [datePreset, setDatePreset] = useState<'all' | 'today' | '7days' | '30days' | 'this_month' | 'last_month' | 'this_year' | 'custom'>('this_month');
+  const [fromDate, setFromDate] = useState<string>('');
+  const [toDate, setToDate] = useState<string>('');
+  
+  // Statement Configuration
+  const [statementType, setStatementType] = useState<'mix' | 'income' | 'expense' | 'transfers' | 'account' | 'category'>('mix');
+  const [selectedAccountId, setSelectedAccountId] = useState<string>('');
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string>('');
+  const [includeHistorical, setIncludeHistorical] = useState<boolean>(true);
+  const [activeTab, setActiveTab] = useState<'statement' | 'chart'>('statement');
 
-  // Compute metrics based on date range
-  const now = new Date();
-  const thisMonthPrefix = now.toISOString().slice(0, 7);
-  const lastMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-  const lastMonthPrefix = lastMonthDate.toISOString().slice(0, 7);
-  const thisYearPrefix = now.getFullYear().toString();
+  // Compute effective date bounds
+  const dateRangeBounds = useMemo(() => {
+    const now = new Date();
+    const todayStr = now.toISOString().split('T')[0];
 
-  const isEntryInRange = (entryDate: string) => {
-    if (dateRange === 'this_month') return entryDate.startsWith(thisMonthPrefix);
-    if (dateRange === 'last_month') return entryDate.startsWith(lastMonthPrefix);
-    if (dateRange === 'this_year') return entryDate.startsWith(thisYearPrefix);
-    return true;
-  };
+    if (datePreset === 'today') {
+      return { start: todayStr, end: todayStr };
+    }
+    if (datePreset === '7days') {
+      const start = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+      return { start, end: todayStr };
+    }
+    if (datePreset === '30days') {
+      const start = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+      return { start, end: todayStr };
+    }
+    if (datePreset === 'this_month') {
+      const start = `${todayStr.slice(0, 7)}-01`;
+      return { start, end: todayStr };
+    }
+    if (datePreset === 'last_month') {
+      const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0);
+      return { 
+        start: lastMonth.toISOString().split('T')[0], 
+        end: lastMonthEnd.toISOString().split('T')[0] 
+      };
+    }
+    if (datePreset === 'this_year') {
+      const start = `${now.getFullYear()}-01-01`;
+      return { start, end: todayStr };
+    }
+    if (datePreset === 'custom') {
+      return { start: fromDate, end: toDate };
+    }
+    return { start: '', end: '' }; // 'all'
+  }, [datePreset, fromDate, toDate]);
 
-  let totalIncome = 0;
-  let totalExpense = 0;
-  const categorySummary: Record<string, { name: string; amount: number; type: string }> = {};
+  // Account & Category lookups
+  const accountMap = useMemo(() => new Map(accounts.map(a => [a.id, a])), [accounts]);
+  const categoryMap = useMemo(() => new Map(categories.map(c => [c.id, c])), [categories]);
 
-  entries.forEach(entry => {
-    if (entry.status === 'posted' && isEntryInRange(entry.entry_date)) {
-      entry.lines?.forEach(line => {
-        if (line.category_id) {
-          const cat = categories.find(c => c.id === line.category_id);
-          const catName = cat?.name || 'Uncategorized';
-          if (!categorySummary[line.category_id]) {
-            categorySummary[line.category_id] = { name: catName, amount: 0, type: line.line_type };
-          }
-          categorySummary[line.category_id].amount += line.amount;
+  // Flattened Statement Rows
+  interface StatementRow {
+    id: string;
+    entryId: string;
+    entryNumber: number;
+    date: string;
+    memo: string;
+    sourceType: string;
+    categoryName: string;
+    categoryType: string;
+    accountName: string;
+    counterparty: string;
+    inflow: number;
+    outflow: number;
+    isHistorical: boolean;
+    historicalNote?: string;
+  }
 
-          if (line.line_type === 'debit') {
-            totalExpense += line.amount;
+  const statementRows: StatementRow[] = useMemo(() => {
+    const rows: StatementRow[] = [];
+
+    entries.forEach(entry => {
+      if (entry.status !== 'posted') return;
+
+      // Filter by historical flag
+      if (!includeHistorical && entry.is_historical) return;
+
+      // Filter by date range
+      if (dateRangeBounds.start && entry.entry_date < dateRangeBounds.start) return;
+      if (dateRangeBounds.end && entry.entry_date > dateRangeBounds.end) return;
+
+      entry.lines?.forEach((line, lineIdx) => {
+        const cat = line.category_id ? categoryMap.get(line.category_id) : undefined;
+        const acc = accountMap.get(line.account_id);
+
+        // Filter by specific account if in 'account' statement mode
+        if (statementType === 'account' && selectedAccountId) {
+          if (line.account_id !== selectedAccountId) return;
+        }
+
+        // Filter by specific category if in 'category' statement mode
+        if (statementType === 'category' && selectedCategoryId) {
+          if (line.category_id !== selectedCategoryId) return;
+        }
+
+        // Inflow / Outflow calculation
+        let inflow = 0;
+        let outflow = 0;
+
+        if (cat) {
+          if (cat.type === 'income' || line.line_type === 'credit') {
+            inflow = line.amount;
           } else {
-            totalIncome += line.amount;
+            outflow = line.amount;
+          }
+        } else {
+          // Account-level debit or credit
+          if (['cash', 'bank', 'mfs', 'savings_dps', 'investment'].includes(acc?.account_type_id || '')) {
+            if (line.line_type === 'debit') inflow = line.amount;
+            else outflow = line.amount;
+          } else {
+            if (line.line_type === 'credit') inflow = line.amount;
+            else outflow = line.amount;
           }
         }
+
+        // Statement Type Filter (mix, income only, expense only, transfers only)
+        if (statementType === 'income' && inflow <= 0) return;
+        if (statementType === 'expense' && outflow <= 0) return;
+        if (statementType === 'transfers' && entry.source_type !== 'transfer') return;
+
+        rows.push({
+          id: `${entry.id}_${lineIdx}`,
+          entryId: entry.id,
+          entryNumber: entry.entry_number,
+          date: entry.entry_date,
+          memo: line.memo || entry.memo,
+          sourceType: entry.source_type,
+          categoryName: cat?.name || (entry.source_type === 'transfer' ? 'Transfer' : 'Uncategorized'),
+          categoryType: cat?.type || entry.source_type,
+          accountName: acc?.name || 'General Account',
+          counterparty: line.counterparty || '',
+          inflow,
+          outflow,
+          isHistorical: Boolean(entry.is_historical),
+          historicalNote: entry.historical_note,
+        });
       });
-    }
-  });
-
-  // Default baseline if workspace is fresh
-  if (totalIncome === 0) totalIncome = 282982;
-  if (totalExpense === 0) totalExpense = 45800;
-
-  const netSavings = totalIncome - totalExpense;
-  const savingsRate = totalIncome > 0 ? ((netSavings / totalIncome) * 100) : 0;
-
-  // Assets & Liabilities Breakdown
-  const liquidAssets = accounts
-    .filter(a => ['cash', 'bank', 'mfs'].includes(a.account_type_id))
-    .reduce((s, a) => s + a.current_balance_cached, 0);
-
-  const savingsInvestments = accounts
-    .filter(a => ['savings_dps', 'investment'].includes(a.account_type_id))
-    .reduce((s, a) => s + a.current_balance_cached, 0);
-
-  const moneyLent = loans
-    .filter(l => l.type === 'lent' && l.status === 'active')
-    .reduce((s, l) => s + (l.principal_amount - l.total_principal_repaid), 0);
-
-  const propertyVal = properties
-    .filter(p => p.status !== 'sold')
-    .reduce((s, p) => s + (p.current_market_valuation * ((p.normalized_ownership_percentage ?? 100) / 100)), 0);
-
-  const totalAssets = liquidAssets + savingsInvestments + moneyLent + propertyVal;
-
-  const cardLiab = accounts
-    .filter(a => a.account_type_id === 'credit_card')
-    .reduce((s, a) => s + a.current_balance_cached, 0);
-
-  const loanDebt = loans
-    .filter(l => l.type === 'borrowed' && l.status === 'active')
-    .reduce((s, l) => s + (l.principal_amount - l.total_principal_repaid), 0);
-
-  const totalLiabilities = cardLiab + loanDebt;
-  const netWorth = totalAssets - totalLiabilities;
-
-  // Futuristic 12-Month Cash Velocity Data (June 2026 To May 2027)
-  const monthlyTimelineData = [
-    { month: 'Jun 26', income: 72000, expense: 38000, netFlow: 34000, savings: 110000 },
-    { month: 'Jul 26', income: 84000, expense: 41000, netFlow: 43000, savings: 115000 },
-    { month: 'Aug 26', income: 91000, expense: 39500, netFlow: 51500, savings: 119000 },
-    { month: 'Sep 26', income: 88000, expense: 42000, netFlow: 46000, savings: 122000 },
-    { month: 'Oct 26', income: 98000, expense: 45000, netFlow: 53000, savings: 126500 },
-    { month: 'Nov 26', income: 105000, expense: 47000, netFlow: 58000, savings: 131541 },
-    { month: 'Dec 26', income: 112000, expense: 52000, netFlow: 60000, savings: 136000 },
-    { month: 'Jan 27', income: 108000, expense: 46000, netFlow: 62000, savings: 141000 },
-    { month: 'Feb 27', income: 115000, expense: 48000, netFlow: 67000, savings: 147000 },
-    { month: 'Mar 27', income: 122000, expense: 49000, netFlow: 73000, savings: 154000 },
-    { month: 'Apr 27', income: 125000, expense: 51000, netFlow: 74000, savings: 161000 },
-    { month: 'May 27', income: 130000, expense: 53000, netFlow: 77000, savings: 168000 },
-  ];
-
-  // Asset Distribution Data for Donut
-  const assetDistribution = [
-    { name: 'Liquid (Cash/Bank/bKash)', value: Math.max(liquidAssets, 14913), color: '#10b981' },
-    { name: 'DSPF & Savings Funds', value: Math.max(savingsInvestments, 131541), color: '#06b6d4' },
-    { name: 'Receivables Lent', value: Math.max(moneyLent, 15000), color: '#8b5cf6' },
-    { name: 'Properties Valuation', value: Math.max(propertyVal, 250000), color: '#f59e0b' },
-  ];
-
-  // CSV Export Function
-  const handleExportCSV = () => {
-    let csvContent = 'data:text/csv;charset=utf-8,';
-    csvContent += 'Transaction Number,Date,Description,Source Type,Status,Debit Total,Credit Total\n';
-
-    entries.forEach(e => {
-      const dTotal = e.lines?.reduce((s, l) => s + (l.line_type === 'debit' ? l.amount : 0), 0) || 0;
-      const cTotal = e.lines?.reduce((s, l) => s + (l.line_type === 'credit' ? l.amount : 0), 0) || 0;
-      const safeMemo = `"${e.memo.replace(/"/g, '""')}"`;
-      csvContent += `${e.entry_number},${e.entry_date},${safeMemo},${e.source_type},${e.status},${dTotal},${cTotal}\n`;
     });
 
-    const encodedUri = encodeURI(csvContent);
+    return rows.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  }, [entries, dateRangeBounds, includeHistorical, statementType, selectedAccountId, selectedCategoryId, categoryMap, accountMap]);
+
+  // Aggregate Metrics (Strictly 100% computed from real records - zero mock numbers)
+  const totalInflow = useMemo(() => statementRows.reduce((sum, r) => sum + r.inflow, 0), [statementRows]);
+  const totalOutflow = useMemo(() => statementRows.reduce((sum, r) => sum + r.outflow, 0), [statementRows]);
+  const netPosition = totalInflow - totalOutflow;
+  const savingsRate = totalInflow > 0 ? Math.max(0, (netPosition / totalInflow) * 100) : 0;
+
+  // Chart data grouping by month or day
+  const chartData = useMemo(() => {
+    const monthlyMap: Record<string, { period: string; inflow: number; outflow: number }> = {};
+    statementRows.forEach(r => {
+      const monthKey = r.date.slice(0, 7); // YYYY-MM
+      if (!monthlyMap[monthKey]) {
+        monthlyMap[monthKey] = { period: monthKey, inflow: 0, outflow: 0 };
+      }
+      monthlyMap[monthKey].inflow += r.inflow;
+      monthlyMap[monthKey].outflow += r.outflow;
+    });
+
+    return Object.values(monthlyMap).sort((a, b) => a.period.localeCompare(b.period));
+  }, [statementRows]);
+
+  // CSV Export Action
+  const handleExportCSV = () => {
+    if (statementRows.length === 0) {
+      alert('No records available in this range to export.');
+      return;
+    }
+
+    const headers = ['Date', 'Entry #', 'Memo', 'Category', 'Account', 'Counterparty', 'Historical/Legacy', 'Inflow', 'Outflow'];
+    const csvLines = [headers.join(',')];
+
+    statementRows.forEach(r => {
+      const row = [
+        `"${r.date}"`,
+        r.entryNumber,
+        `"${r.memo.replace(/"/g, '""')}"`,
+        `"${r.categoryName.replace(/"/g, '""')}"`,
+        `"${r.accountName.replace(/"/g, '""')}"`,
+        `"${r.counterparty.replace(/"/g, '""')}"`,
+        r.isHistorical ? '"Yes"' : '"No"',
+        r.inflow.toFixed(2),
+        r.outflow.toFixed(2),
+      ];
+      csvLines.push(row.join(','));
+    });
+
+    const blob = new Blob([csvLines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
-    link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `power_of_money_ledger_${new Date().toISOString().split('T')[0]}.csv`);
-    document.body.appendChild(link);
+    link.href = url;
+    link.download = `financial_statement_${statementType}_${datePreset}_${new Date().toISOString().split('T')[0]}.csv`;
     link.click();
-    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  const handlePrint = () => {
+    window.print();
   };
 
   return (
     <div className="space-y-6">
-      {/* Top Header & Cybernetic Telemetry Bar */}
+      {/* Top Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <div className="flex items-center gap-2">
-            <h2 className="text-xl sm:text-2xl font-extrabold text-slate-900 dark:text-white tracking-tight flex items-center gap-2">
-              <Zap className="w-5 h-5 text-emerald-400" />
-              <span>Futuristic Analytics &amp; Reports</span>
-            </h2>
-            <span className="px-2.5 py-0.5 rounded-full text-2xs font-mono font-bold bg-emerald-500/10 text-emerald-500 border border-emerald-500/30">
-              LIVE TELEMETRY
-            </span>
-          </div>
-          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-            Dynamic animated cash velocity, revenue trajectory visualizer, and double-entry reports
+          <h2 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
+            <span>Financial Statements &amp; Custom Date-to-Date Generator</span>
+          </h2>
+          <p className="text-xs text-slate-500 dark:text-slate-400">
+            Generate custom date-to-date statements (mixed, income-only, expense-only, or account-specific) with instant export.
           </p>
         </div>
 
         <div className="flex items-center gap-2">
-          {/* Date Range Tabs */}
-          <div className="flex items-center p-0.5 bg-slate-100 dark:bg-slate-800 rounded-xl text-xs">
-            <button
-              onClick={() => setDateRange('this_month')}
-              className={`px-3 py-1.5 rounded-lg transition-all ${
-                dateRange === 'this_month' ? 'bg-white dark:bg-slate-700 font-semibold shadow-xs text-slate-900 dark:text-white' : 'text-slate-500'
-              }`}
-            >
-              Month
-            </button>
-            <button
-              onClick={() => setDateRange('this_year')}
-              className={`px-3 py-1.5 rounded-lg transition-all ${
-                dateRange === 'this_year' ? 'bg-white dark:bg-slate-700 font-semibold shadow-xs text-slate-900 dark:text-white' : 'text-slate-500'
-              }`}
-            >
-              Fiscal Period
-            </button>
-            <button
-              onClick={() => setDateRange('all')}
-              className={`px-3 py-1.5 rounded-lg transition-all ${
-                dateRange === 'all' ? 'bg-white dark:bg-slate-700 font-semibold shadow-xs text-slate-900 dark:text-white' : 'text-slate-500'
-              }`}
-            >
-              All Time
-            </button>
-          </div>
-
           <button
             onClick={handleExportCSV}
-            className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-slate-900 dark:bg-slate-800 hover:bg-slate-800 dark:hover:bg-slate-700 text-white text-xs font-semibold shadow-xs transition-colors shrink-0"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-colors shadow-2xs"
           >
             <Download className="w-3.5 h-3.5" />
             <span>Export CSV</span>
           </button>
+          <button
+            onClick={handlePrint}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-slate-900 dark:bg-slate-800 hover:bg-slate-800 text-white text-xs font-semibold transition-colors shadow-2xs"
+          >
+            <Printer className="w-3.5 h-3.5" />
+            <span>Print / PDF</span>
+          </button>
         </div>
       </div>
 
-      {/* Cybernetic Telemetry Metric Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* Net Worth Vault */}
-        <div className="p-5 rounded-2xl bg-gradient-to-br from-slate-900 via-slate-900 to-slate-950 border border-slate-800 text-white shadow-xl relative overflow-hidden">
-          <div className="absolute -right-6 -bottom-6 w-24 h-24 bg-emerald-500/10 rounded-full blur-xl pointer-events-none" />
-          <div className="flex items-center justify-between text-2xs uppercase tracking-wider text-slate-400 mb-2">
-            <span>Net Worth (Equity)</span>
-            <ShieldCheck className="w-4 h-4 text-emerald-400" />
-          </div>
-          <div className="text-2xl font-black font-mono tracking-tight text-white tabular-nums">
-            {formatMoney(netWorth)}
-          </div>
-          <div className="mt-2 text-2xs text-emerald-400 flex items-center gap-1">
-            <ArrowUpRight className="w-3.5 h-3.5" />
-            <span>+18.4% fiscal year growth rate</span>
-          </div>
+      {/* Statement Configuration & Date Controls Card */}
+      <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">
+        <div className="flex items-center gap-2 text-xs font-bold text-slate-900 dark:text-white pb-2 border-b border-slate-100 dark:border-slate-800">
+          <Filter className="w-4 h-4 text-emerald-500" />
+          <span>Statement Parameters &amp; Time Window</span>
         </div>
 
-        {/* Operating Cash Inflow */}
-        <div className="p-5 rounded-2xl bg-gradient-to-br from-slate-900 via-slate-900 to-slate-950 border border-slate-800 text-white shadow-xl relative overflow-hidden">
-          <div className="absolute -right-6 -bottom-6 w-24 h-24 bg-cyan-500/10 rounded-full blur-xl pointer-events-none" />
-          <div className="flex items-center justify-between text-2xs uppercase tracking-wider text-slate-400 mb-2">
-            <span>Total Inflow Velocity</span>
-            <Activity className="w-4 h-4 text-cyan-400" />
-          </div>
-          <div className="text-2xl font-black font-mono tracking-tight text-cyan-400 tabular-nums">
-            {formatMoney(totalIncome)}
-          </div>
-          <div className="mt-2 text-2xs text-slate-400">
-            Ledger Inflows (Remote, Salary, Returns)
-          </div>
-        </div>
-
-        {/* Operating Outflow */}
-        <div className="p-5 rounded-2xl bg-gradient-to-br from-slate-900 via-slate-900 to-slate-950 border border-slate-800 text-white shadow-xl relative overflow-hidden">
-          <div className="absolute -right-6 -bottom-6 w-24 h-24 bg-rose-500/10 rounded-full blur-xl pointer-events-none" />
-          <div className="flex items-center justify-between text-2xs uppercase tracking-wider text-slate-400 mb-2">
-            <span>Operating Outflow</span>
-            <ArrowDownRight className="w-4 h-4 text-rose-400" />
-          </div>
-          <div className="text-2xl font-black font-mono tracking-tight text-rose-400 tabular-nums">
-            {formatMoney(totalExpense)}
-          </div>
-          <div className="mt-2 text-2xs text-slate-400">
-            Across 36 categorized spending accounts
-          </div>
-        </div>
-
-        {/* Savings Retention Rate */}
-        <div className="p-5 rounded-2xl bg-gradient-to-br from-slate-900 via-slate-900 to-slate-950 border border-slate-800 text-white shadow-xl relative overflow-hidden">
-          <div className="absolute -right-6 -bottom-6 w-24 h-24 bg-amber-500/10 rounded-full blur-xl pointer-events-none" />
-          <div className="flex items-center justify-between text-2xs uppercase tracking-wider text-slate-400 mb-2">
-            <span>Capital Retention Index</span>
-            <Sparkles className="w-4 h-4 text-amber-400" />
-          </div>
-          <div className="text-2xl font-black font-mono tracking-tight text-amber-400 tabular-nums">
-            {savingsRate.toFixed(1)}%
-          </div>
-          <div className="mt-2 text-2xs text-slate-400">
-            Net Surplus: <strong className="text-emerald-400">{formatMoney(netSavings)}</strong>
-          </div>
-        </div>
-      </div>
-
-      {/* Main Animated Glowing Visualizer Card */}
-      <div className="p-6 rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xl space-y-4">
-        {/* Visualizer Mode Switcher */}
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
+          {/* 1. Statement Type */}
           <div>
-            <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
-              <BarChart3 className="w-4 h-4 text-emerald-500" />
-              <span>Multi-Stream Inflow &amp; Outflow Velocity Simulation</span>
-            </h3>
-            <p className="text-xs text-slate-500 dark:text-slate-400">
-              Interactive 12-month timeline: June 2026 To May 2027
-            </p>
+            <label className="block text-2xs font-semibold text-slate-600 dark:text-slate-400 mb-1">
+              Statement Mode
+            </label>
+            <select
+              value={statementType}
+              onChange={(e) => setStatementType(e.target.value as any)}
+              className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white outline-hidden focus:ring-2 focus:ring-emerald-500 font-medium"
+            >
+              <option value="mix">All In-Out (Mixed Statement)</option>
+              <option value="income">Inflows Only (Income Statement)</option>
+              <option value="expense">Outflows Only (Expense Statement)</option>
+              <option value="transfers">Transfers &amp; Allocations</option>
+              <option value="account">Account-Specific Ledger</option>
+              <option value="category">Category-Specific Breakdown</option>
+            </select>
           </div>
 
-          <div className="flex items-center gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl text-xs">
-            <button
-              onClick={() => setActiveChartTab('velocity')}
-              className={`px-3 py-1.5 rounded-lg font-medium transition-all ${
-                activeChartTab === 'velocity' ? 'bg-white dark:bg-slate-700 shadow-xs text-slate-900 dark:text-white font-semibold' : 'text-slate-500'
-              }`}
+          {/* 2. Date Preset */}
+          <div>
+            <label className="block text-2xs font-semibold text-slate-600 dark:text-slate-400 mb-1">
+              Time Period
+            </label>
+            <select
+              value={datePreset}
+              onChange={(e) => setDatePreset(e.target.value as any)}
+              className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white outline-hidden focus:ring-2 focus:ring-emerald-500 font-medium"
             >
-              Cash Velocity (Area)
-            </button>
-            <button
-              onClick={() => setActiveChartTab('allocation')}
-              className={`px-3 py-1.5 rounded-lg font-medium transition-all ${
-                activeChartTab === 'allocation' ? 'bg-white dark:bg-slate-700 shadow-xs text-slate-900 dark:text-white font-semibold' : 'text-slate-500'
-              }`}
-            >
-              Asset Allocation (Donut)
-            </button>
-            <button
-              onClick={() => setActiveChartTab('net_worth')}
-              className={`px-3 py-1.5 rounded-lg font-medium transition-all ${
-                activeChartTab === 'net_worth' ? 'bg-white dark:bg-slate-700 shadow-xs text-slate-900 dark:text-white font-semibold' : 'text-slate-500'
-              }`}
-            >
-              Savings Trajectory
-            </button>
+              <option value="all">All Available Records</option>
+              <option value="today">Today</option>
+              <option value="7days">Last 7 Days</option>
+              <option value="30days">Last 30 Days</option>
+              <option value="this_month">This Month</option>
+              <option value="last_month">Last Month</option>
+              <option value="this_year">This Fiscal Year</option>
+              <option value="custom">Custom Date-to-Date...</option>
+            </select>
           </div>
-        </div>
 
-        {/* Chart Viewport */}
-        <div className="h-[360px] w-full pt-4">
-          {activeChartTab === 'velocity' && (
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={monthlyTimelineData} margin={{ top: 10, right: 30, left: 10, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="glowIncome" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#10b981" stopOpacity={0.6} />
-                    <stop offset="95%" stopColor="#10b981" stopOpacity={0.0} />
-                  </linearGradient>
-                  <linearGradient id="glowExpense" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#f43f5e" stopOpacity={0.5} />
-                    <stop offset="95%" stopColor="#f43f5e" stopOpacity={0.0} />
-                  </linearGradient>
-                  <linearGradient id="glowNet" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#06b6d4" stopOpacity={0.4} />
-                    <stop offset="95%" stopColor="#06b6d4" stopOpacity={0.0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.3} />
-                <XAxis dataKey="month" stroke="#94a3b8" fontSize={11} tickLine={false} />
-                <YAxis stroke="#94a3b8" fontSize={11} tickLine={false} tickFormatter={(v) => `৳${v / 1000}k`} />
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: '#0f172a',
-                    border: '1px solid #1e293b',
-                    borderRadius: '12px',
-                    fontSize: '12px',
-                    color: '#fff',
-                    boxShadow: '0 20px 25px -5px rgb(0 0 0 / 0.5)',
-                  }}
-                  formatter={(val: any) => [`৳ ${Number(val).toLocaleString()}`, '']}
-                />
-                <Legend iconType="circle" />
-                <Area
-                  type="monotone"
-                  dataKey="income"
-                  name="Monthly Inflow (৳)"
-                  stroke="#10b981"
-                  strokeWidth={2.5}
-                  fillOpacity={1}
-                  fill="url(#glowIncome)"
-                />
-                <Area
-                  type="monotone"
-                  dataKey="expense"
-                  name="Monthly Outflow (৳)"
-                  stroke="#f43f5e"
-                  strokeWidth={2}
-                  fillOpacity={1}
-                  fill="url(#glowExpense)"
-                />
-                <Area
-                  type="monotone"
-                  dataKey="netFlow"
-                  name="Retained Surplus (৳)"
-                  stroke="#06b6d4"
-                  strokeWidth={2}
-                  fillOpacity={1}
-                  fill="url(#glowNet)"
-                />
-              </AreaChart>
-            </ResponsiveContainer>
-          )}
-
-          {activeChartTab === 'allocation' && (
-            <div className="grid grid-cols-1 md:grid-cols-2 h-full items-center">
-              <ResponsiveContainer width="100%" height={320}>
-                <PieChart>
-                  <Pie
-                    data={assetDistribution}
-                    innerRadius={70}
-                    outerRadius={115}
-                    paddingAngle={4}
-                    dataKey="value"
-                  >
-                    {assetDistribution.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={entry.color} />
-                    ))}
-                  </Pie>
-                  <Tooltip
-                    contentStyle={{
-                      backgroundColor: '#0f172a',
-                      border: '1px solid #1e293b',
-                      borderRadius: '12px',
-                      fontSize: '12px',
-                      color: '#fff',
-                    }}
-                    formatter={(val: any) => [`৳ ${Number(val).toLocaleString()}`, '']}
-                  />
-                </PieChart>
-              </ResponsiveContainer>
-
-              <div className="space-y-3 px-4">
-                <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                  Portfolio Capital Distribution
-                </h4>
-                {assetDistribution.map(item => (
-                  <div key={item.name} className="flex items-center justify-between p-2.5 rounded-xl bg-slate-50 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800">
-                    <div className="flex items-center gap-2">
-                      <div className="w-3 h-3 rounded-full" style={{ backgroundColor: item.color }} />
-                      <span className="text-xs text-slate-700 dark:text-slate-300 font-medium">
-                        {item.name}
-                      </span>
-                    </div>
-                    <span className="text-xs font-mono font-bold text-slate-900 dark:text-white tabular-nums">
-                      {formatMoney(item.value)}
-                    </span>
-                  </div>
+          {/* Conditional Account Select */}
+          {statementType === 'account' && (
+            <div>
+              <label className="block text-2xs font-semibold text-slate-600 dark:text-slate-400 mb-1">
+                Filter Specific Account
+              </label>
+              <select
+                value={selectedAccountId}
+                onChange={(e) => setSelectedAccountId(e.target.value)}
+                className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white outline-hidden focus:ring-2 focus:ring-emerald-500 font-medium"
+              >
+                <option value="">All Accounts</option>
+                {accounts.map(acc => (
+                  <option key={acc.id} value={acc.id}>{acc.name}</option>
                 ))}
-              </div>
+              </select>
             </div>
           )}
 
-          {activeChartTab === 'net_worth' && (
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={monthlyTimelineData} margin={{ top: 10, right: 30, left: 10, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#334155" opacity={0.3} />
-                <XAxis dataKey="month" stroke="#94a3b8" fontSize={11} tickLine={false} />
-                <YAxis stroke="#94a3b8" fontSize={11} tickLine={false} tickFormatter={(v) => `৳${v / 1000}k`} />
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: '#0f172a',
-                    border: '1px solid #1e293b',
-                    borderRadius: '12px',
-                    fontSize: '12px',
-                    color: '#fff',
-                  }}
-                  formatter={(val: any) => [`৳ ${Number(val).toLocaleString()}`, '']}
-                />
-                <Legend iconType="circle" />
-                <Bar dataKey="savings" name="Cumulative Savings Funds (DSPF + Unity)" fill="#3b82f6" radius={[6, 6, 0, 0]} />
-                <Bar dataKey="netFlow" name="Monthly Surplus" fill="#10b981" radius={[6, 6, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
+          {/* Conditional Category Select */}
+          {statementType === 'category' && (
+            <div>
+              <label className="block text-2xs font-semibold text-slate-600 dark:text-slate-400 mb-1">
+                Filter Specific Category
+              </label>
+              <select
+                value={selectedCategoryId}
+                onChange={(e) => setSelectedCategoryId(e.target.value)}
+                className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white outline-hidden focus:ring-2 focus:ring-emerald-500 font-medium"
+              >
+                <option value="">All Categories</option>
+                {categories.map(cat => (
+                  <option key={cat.id} value={cat.id}>{cat.name} ({cat.type})</option>
+                ))}
+              </select>
+            </div>
           )}
+
+          {/* Historical / Previous DB Toggle */}
+          <div className="flex items-center gap-2 pt-6">
+            <label className="flex items-center gap-2 text-xs font-semibold text-slate-700 dark:text-slate-300 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={includeHistorical}
+                onChange={(e) => setIncludeHistorical(e.target.checked)}
+                className="rounded-sm border-slate-300 text-emerald-600 focus:ring-emerald-500"
+              />
+              <span className="flex items-center gap-1">
+                <History className="w-3.5 h-3.5 text-amber-500" />
+                <span>Include Prior Period / Previous DB Entries</span>
+              </span>
+            </label>
+          </div>
+        </div>
+
+        {/* Date From & Date To Custom Pickers */}
+        {datePreset === 'custom' && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
+            <div>
+              <label className="block text-2xs font-semibold text-slate-600 dark:text-slate-400 mb-1">
+                From Date (Start)
+              </label>
+              <input
+                type="date"
+                value={fromDate}
+                onChange={(e) => setFromDate(e.target.value)}
+                className="w-full px-3 py-1.5 text-xs rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
+              />
+            </div>
+            <div>
+              <label className="block text-2xs font-semibold text-slate-600 dark:text-slate-400 mb-1">
+                To Date (End)
+              </label>
+              <input
+                type="date"
+                value={toDate}
+                onChange={(e) => setToDate(e.target.value)}
+                className="w-full px-3 py-1.5 text-xs rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
+              />
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Aggregate Statement Summary Cards (Pure DB calculations) */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs">
+          <span className="text-2xs font-semibold uppercase text-slate-500 block mb-1">
+            Total Period Inflow
+          </span>
+          <div className="text-2xl font-bold font-mono text-emerald-600 dark:text-emerald-400 tabular-nums">
+            +{formatMoney(totalInflow)}
+          </div>
+          <span className="text-2xs text-slate-400 mt-1 block">Revenue, deposits &amp; recoveries</span>
+        </div>
+
+        <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs">
+          <span className="text-2xs font-semibold uppercase text-slate-500 block mb-1">
+            Total Period Outflow
+          </span>
+          <div className="text-2xl font-bold font-mono text-rose-600 dark:text-rose-400 tabular-nums">
+            -{formatMoney(totalOutflow)}
+          </div>
+          <span className="text-2xs text-slate-400 mt-1 block">Living expenses &amp; repayments</span>
+        </div>
+
+        <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs">
+          <span className="text-2xs font-semibold uppercase text-slate-500 block mb-1">
+            Net Cashflow Position
+          </span>
+          <div className={`text-2xl font-bold font-mono tabular-nums ${
+            netPosition >= 0 ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'
+          }`}>
+            {netPosition >= 0 ? `+${formatMoney(netPosition)}` : formatMoney(netPosition)}
+          </div>
+          <span className="text-2xs text-slate-400 mt-1 block">
+            {netPosition >= 0 ? 'Surplus retained' : 'Deficit / Over-outflow'}
+          </span>
+        </div>
+
+        <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs">
+          <span className="text-2xs font-semibold uppercase text-slate-500 block mb-1">
+            Active Statement Rows
+          </span>
+          <div className="text-2xl font-bold font-mono text-slate-900 dark:text-white">
+            {statementRows.length} Rows
+          </div>
+          <span className="text-2xs text-slate-400 mt-1 block">
+            Savings Rate: {savingsRate.toFixed(1)}%
+          </span>
         </div>
       </div>
+
+      {/* View Switcher: Table Statement vs Velocity Chart */}
+      <div className="flex items-center gap-2 border-b border-slate-200 dark:border-slate-800 pb-2">
+        <button
+          onClick={() => setActiveTab('statement')}
+          className={`flex items-center gap-1.5 px-4 py-2 text-xs font-bold rounded-xl transition-colors ${
+            activeTab === 'statement'
+              ? 'bg-emerald-600 text-white shadow-xs'
+              : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+          }`}
+        >
+          <FileSpreadsheet className="w-4 h-4" />
+          <span>Statement Ledger Table ({statementRows.length})</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab('chart')}
+          className={`flex items-center gap-1.5 px-4 py-2 text-xs font-bold rounded-xl transition-colors ${
+            activeTab === 'chart'
+              ? 'bg-emerald-600 text-white shadow-xs'
+              : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+          }`}
+        >
+          <BarChart3 className="w-4 h-4" />
+          <span>Monthly Cashflow Chart</span>
+        </button>
+      </div>
+
+      {/* Tab 1: Detailed Statement Table */}
+      {activeTab === 'statement' && (
+        <div className="rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-left border-collapse text-xs">
+              <thead>
+                <tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-950/70 text-2xs uppercase tracking-wider text-slate-500 font-semibold">
+                  <th className="py-3 px-3">Date</th>
+                  <th className="py-3 px-3">#</th>
+                  <th className="py-3 px-4">Description / Memo</th>
+                  <th className="py-3 px-3">Category</th>
+                  <th className="py-3 px-3">Account</th>
+                  <th className="py-3 px-3">Counterparty</th>
+                  <th className="py-3 px-3">Flag</th>
+                  <th className="py-3 px-4 text-right">Inflow (+)</th>
+                  <th className="py-3 px-4 text-right">Outflow (-)</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                {statementRows.length === 0 ? (
+                  <tr>
+                    <td colSpan={9} className="py-12 text-center text-slate-400">
+                      No financial records match the selected statement parameters and date range.
+                    </td>
+                  </tr>
+                ) : (
+                  statementRows.map(row => (
+                    <tr key={row.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors">
+                      <td className="py-3 px-3 font-mono text-slate-500 whitespace-nowrap">
+                        {row.date}
+                      </td>
+                      <td className="py-3 px-3 font-mono text-slate-400 whitespace-nowrap">
+                        #{row.entryNumber}
+                      </td>
+                      <td className="py-3 px-4 font-medium text-slate-900 dark:text-white">
+                        <div>{row.memo}</div>
+                      </td>
+                      <td className="py-3 px-3 whitespace-nowrap">
+                        <span className="px-2 py-0.5 rounded-full text-2xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+                          {row.categoryName}
+                        </span>
+                      </td>
+                      <td className="py-3 px-3 text-slate-700 dark:text-slate-300 font-medium whitespace-nowrap">
+                        {row.accountName}
+                      </td>
+                      <td className="py-3 px-3 text-slate-500 dark:text-slate-400 whitespace-nowrap">
+                        {row.counterparty || '—'}
+                      </td>
+                      <td className="py-3 px-3 whitespace-nowrap">
+                        {row.isHistorical ? (
+                          <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-3xs font-semibold bg-amber-100 text-amber-800 dark:bg-amber-900/60 dark:text-amber-300">
+                            <History className="w-3 h-3 text-amber-600" />
+                            <span>Previous DB</span>
+                          </span>
+                        ) : (
+                          <span className="text-3xs text-slate-400 font-mono">Current</span>
+                        )}
+                      </td>
+                      <td className="py-3 px-4 text-right font-mono font-bold text-emerald-600 dark:text-emerald-400 tabular-nums whitespace-nowrap">
+                        {row.inflow > 0 ? `+${formatMoney(row.inflow)}` : '—'}
+                      </td>
+                      <td className="py-3 px-4 text-right font-mono font-bold text-rose-600 dark:text-rose-400 tabular-nums whitespace-nowrap">
+                        {row.outflow > 0 ? `-${formatMoney(row.outflow)}` : '—'}
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* Tab 2: Monthly Cashflow Chart */}
+      {activeTab === 'chart' && (
+        <div className="p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                Monthly Inflow vs Outflow Velocity
+              </h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Visualizing operating cash conservation across time periods.
+              </p>
+            </div>
+          </div>
+
+          {chartData.length === 0 ? (
+            <div className="h-64 flex items-center justify-center text-slate-400 text-xs">
+              No transaction history available in this range to plot chart.
+            </div>
+          ) : (
+            <div className="h-80 w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={chartData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" opacity={0.15} />
+                  <XAxis dataKey="period" fontSize={11} stroke="#94a3b8" />
+                  <YAxis fontSize={11} stroke="#94a3b8" tickFormatter={(v) => `৳${(v / 1000).toFixed(0)}k`} />
+                  <Tooltip 
+                    formatter={(val: any) => formatMoney(Number(val) || 0)} 
+                    contentStyle={{ borderRadius: '12px', fontSize: '12px', border: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}
+                  />
+                  <Legend wrapperStyle={{ fontSize: '12px', paddingTop: '10px' }} />
+                  <Bar dataKey="inflow" name="Total Inflow" fill="#10b981" radius={[4, 4, 0, 0]} />
+                  <Bar dataKey="outflow" name="Total Outflow" fill="#f43f5e" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };
