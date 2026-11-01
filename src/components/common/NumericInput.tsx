@@ -82,7 +82,7 @@ export const NumericInput = forwardRef<HTMLInputElement, NumericInputProps>(({
       return;
     }
 
-    // Allow navigation, editing and tab/enter keys
+    // Allow navigation, editing and tab/enter keys, as well as Android/IME virtual keys
     const allowedSpecialKeys = [
       'Backspace',
       'Delete',
@@ -95,6 +95,9 @@ export const NumericInput = forwardRef<HTMLInputElement, NumericInputProps>(({
       'ArrowDown',
       'Home',
       'End',
+      'Unidentified',
+      'Process',
+      'Dead',
     ];
     if (allowedSpecialKeys.includes(e.key)) {
       return;
@@ -105,9 +108,12 @@ export const NumericInput = forwardRef<HTMLInputElement, NumericInputProps>(({
     const isBengaliDigit = ['০', '১', '২', '৩', '৪', '৫', '৬', '৭', '৮', '৯'].includes(e.key);
     const isDigit = isAsciiDigit || isBengaliDigit;
 
+    const input = e.currentTarget;
+    const hasSelection = (input.selectionStart ?? 0) !== (input.selectionEnd ?? 0);
     const currentValStr = String(value ?? '');
-    const isDecimal = allowDecimal && (e.key === '.' || e.key === ',') && !currentValStr.includes('.');
-    const isMinus = allowNegative && e.key === '-' && !currentValStr.includes('-');
+    const alreadyHasDot = currentValStr.includes('.');
+    const isDecimal = allowDecimal && (e.key === '.' || e.key === ',') && (!alreadyHasDot || hasSelection);
+    const isMinus = allowNegative && e.key === '-' && (!currentValStr.includes('-') || hasSelection);
 
     if (!isDigit && !isDecimal && !isMinus) {
       // Strictly prevent alphabets and special symbols from typing into numeric field

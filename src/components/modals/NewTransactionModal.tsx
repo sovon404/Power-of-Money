@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { X, ArrowRightLeft, ArrowDownRight, ArrowUpRight, Scale, AlertCircle, History, Trash2 } from 'lucide-react';
 import { useWorkspace } from '../../context/WorkspaceContext';
 import { db } from '../../services/db';
@@ -25,8 +25,8 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
   const { currentWorkspace, formatMoney, refreshData } = useWorkspace();
   const workspaceId = currentWorkspace?.id || '';
 
-  const accounts = db.getAccounts(workspaceId).filter(a => !a.is_archived);
-  const categories = db.getCategories(workspaceId);
+  const accounts = useMemo(() => db.getAccounts(workspaceId).filter(a => !a.is_archived), [workspaceId]);
+  const categories = useMemo(() => db.getCategories(workspaceId), [workspaceId]);
 
   const [mode, setMode] = useState<'expense' | 'income' | 'transfer'>(defaultMode || 'expense');
   const [date, setDate] = useState<string>(new Date().toISOString().split('T')[0]);
@@ -40,7 +40,7 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
   const [historicalNote, setHistoricalNote] = useState<string>('');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // Initialize or populate from entryToEdit
+  // Initialize or populate from entryToEdit ONLY when modal opens or entryToEdit changes
   useEffect(() => {
     if (!isOpen) return;
 
@@ -69,7 +69,7 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
         setSourceAccountId(creditLine?.account_id || '');
         setDestinationAccountId(debitLine?.account_id || '');
       } else {
-        const cat = categories.find(c => c.id === linkedCatId);
+        const cat = db.getCategories(workspaceId).find(c => c.id === linkedCatId);
         if (cat?.type === 'income') {
           setMode('income');
           setDestinationAccountId(debitLine?.account_id || '');
@@ -87,19 +87,23 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
       setIsHistorical(false);
       setHistoricalNote('');
       setErrorMsg(null);
+      setMode(defaultMode || 'expense');
 
-      if (accounts.length > 0 && !sourceAccountId) {
-        setSourceAccountId(accounts[0].id);
+      const currentAccounts = db.getAccounts(workspaceId).filter(a => !a.is_archived);
+      const currentCategories = db.getCategories(workspaceId);
+
+      if (currentAccounts.length > 0) {
+        setSourceAccountId(currentAccounts[0].id);
       }
-      if (accounts.length > 1 && !destinationAccountId) {
-        setDestinationAccountId(accounts[1].id);
+      if (currentAccounts.length > 1) {
+        setDestinationAccountId(currentAccounts[1].id);
       }
-      const expenseCats = categories.filter(c => c.type === 'expense');
-      if (expenseCats.length > 0 && !categoryId) {
+      const expenseCats = currentCategories.filter(c => c.type === 'expense');
+      if (expenseCats.length > 0) {
         setCategoryId(expenseCats[0].id);
       }
     }
-  }, [isOpen, entryToEdit, accounts, categories]);
+  }, [isOpen, entryToEdit?.id, defaultMode]);
 
   if (!isOpen) return null;
 
