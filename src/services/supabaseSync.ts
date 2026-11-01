@@ -235,10 +235,25 @@ class SupabaseSyncEngine {
       try {
         const { error } = await supabase.from('categories').upsert(catPayload);
         if (error) {
-          // If the column income_type does not exist on remote supabase categories table yet, fallback without it
-          if (error.message?.includes('income_type') || error.details?.includes('income_type') || error.code === '42703') {
+          if (error.code === '23505' || error.message?.includes('duplicate key') || error.message?.includes('uq_category_name_workspace')) {
+            // Update the category by workspace_id and name to satisfy unique constraint
+            const { id: _, ...fieldsToUpdate } = catPayload;
+            await supabase
+              .from('categories')
+              .update(fieldsToUpdate)
+              .eq('workspace_id', wsUuid)
+              .ilike('name', cat.name);
+          } else if (error.message?.includes('income_type') || error.details?.includes('income_type') || error.code === '42703') {
             delete catPayload.income_type;
-            await supabase.from('categories').upsert(catPayload);
+            const { error: fallbackErr } = await supabase.from('categories').upsert(catPayload);
+            if (fallbackErr && (fallbackErr.code === '23505' || fallbackErr.message?.includes('duplicate key'))) {
+              const { id: _, ...fieldsToUpdate } = catPayload;
+              await supabase
+                .from('categories')
+                .update(fieldsToUpdate)
+                .eq('workspace_id', wsUuid)
+                .ilike('name', cat.name);
+            }
           } else {
             console.warn('Sync category error:', error);
           }
@@ -268,7 +283,20 @@ class SupabaseSyncEngine {
       // Ensure all line accounts and categories exist in Supabase first to prevent 23503
       if (entry.lines && entry.lines.length > 0) {
         for (const line of entry.lines) {
-          await this.ensureRemoteAccount(line.account_id, workspaceId);
+          const isExpenseOp = line.account_id === toUuid(`acc_expense_operating_${workspaceId}`);
+          const isIncomeOp = line.account_id === toUuid(`acc_income_earned_${workspaceId}`);
+          const isEquityOp = line.account_id === toUuid(`acc_equity_offset_${workspaceId}`);
+
+          if (isExpenseOp) {
+            await this.ensureRemoteAccount(line.account_id, workspaceId, 'General Operating Expenses', 'expense_operating');
+          } else if (isIncomeOp) {
+            await this.ensureRemoteAccount(line.account_id, workspaceId, 'Earned Revenue & Income', 'income_salary');
+          } else if (isEquityOp) {
+            await this.ensureRemoteAccount(line.account_id, workspaceId, 'Opening Balance Equity', 'opening_equity');
+          } else {
+            await this.ensureRemoteAccount(line.account_id, workspaceId);
+          }
+
           if (line.category_id) {
             await this.ensureRemoteCategory(line.category_id, workspaceId);
           }

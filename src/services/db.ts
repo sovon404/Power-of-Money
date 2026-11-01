@@ -130,6 +130,9 @@ class DatabaseEngine {
       list.push(ws);
     }
     this.set(STORAGE_KEYS.WORKSPACES, list);
+    if (ws.created_by) {
+      supabaseSync.syncWorkspace(ws, ws.created_by);
+    }
   }
 
   // Initialize workspace bound strictly to authenticated user's ID
@@ -150,10 +153,11 @@ class DatabaseEngine {
         created_at: new Date().toISOString(),
       };
       this.saveWorkspace(activeWs);
-      this.seedCategoriesForWorkspace(activeWs.id);
+      this.ensureCategoriesForWorkspace(activeWs.id);
       isNew = true;
     } else {
       activeWs = workspaces[0];
+      this.ensureCategoriesForWorkspace(activeWs.id);
     }
 
     // Direct cloud sync to Supabase (profiles, workspaces)
@@ -169,25 +173,66 @@ class DatabaseEngine {
   }
 
   seedCategoriesForWorkspace(workspaceId: string): void {
-    const existing = this.getCategories(workspaceId);
-    if (existing.length === 0) {
-      const newCats: Category[] = SEED_CATEGORIES_DATA.map((c, i) => ({
-        id: toUuid(`cat_${workspaceId}_${i + 1}`),
-        workspace_id: workspaceId,
-        name: c.name,
-        type: c.type,
-        income_type: c.income_type,
-        accounting_classification: c.accounting_classification,
-        icon: c.icon,
-        color: c.color,
-        is_seed: true,
-        is_archived: false,
-        sort_order: i + 1,
-      }));
-      const allCats = this.get<Category[]>(STORAGE_KEYS.CATEGORIES, []);
-      this.set(STORAGE_KEYS.CATEGORIES, [...allCats, ...newCats]);
-      newCats.forEach(cat => supabaseSync.syncCategory(cat, workspaceId));
+    this.ensureCategoriesForWorkspace(workspaceId);
+  }
+
+  // Ensures all 36 expense categories + income stream categories exist with deterministic UUIDs
+  ensureCategoriesForWorkspace(workspaceId: string): Category[] {
+    const allCats = this.get<Category[]>(STORAGE_KEYS.CATEGORIES, []);
+    const existing = allCats.filter(c => c.workspace_id === workspaceId);
+    const existingNames = new Set(existing.map(c => c.name.toLowerCase()));
+    const missing: Category[] = [];
+
+    SEED_CATEGORIES_DATA.forEach((c, i) => {
+      if (!existingNames.has(c.name.toLowerCase())) {
+        const newCat: Category = {
+          id: toUuid(`cat_${workspaceId}_${c.name.toLowerCase().replace(/[^a-z0-9]/g, '_')}`),
+          workspace_id: workspaceId,
+          name: c.name,
+          type: c.type,
+          income_type: c.income_type,
+          accounting_classification: c.accounting_classification,
+          icon: c.icon,
+          color: c.color,
+          is_seed: true,
+          is_archived: false,
+          sort_order: i + 1,
+        };
+        missing.push(newCat);
+      }
+    });
+
+    let updated = false;
+    let resultCats = [...allCats];
+
+    if (missing.length > 0) {
+      resultCats = [...resultCats, ...missing];
+      updated = true;
+      missing.forEach(cat => supabaseSync.syncCategory(cat, workspaceId));
     }
+
+    // Also enrich any existing income categories that lack income_type
+    resultCats = resultCats.map(cat => {
+      if (cat.workspace_id === workspaceId && cat.type === 'income' && !cat.income_type) {
+        updated = true;
+        const seedMatch = SEED_CATEGORIES_DATA.find(s => s.name.toLowerCase() === cat.name.toLowerCase());
+        const inferredType = seedMatch?.income_type || (
+          cat.name.toLowerCase().includes('salary') || cat.name.toLowerCase().includes('bonus') || cat.name.toLowerCase().includes('allowance') ? 'salary' :
+          cat.name.toLowerCase().includes('freelance') || cat.name.toLowerCase().includes('remote') || cat.name.toLowerCase().includes('contract') ? 'remote_freelance' :
+          cat.name.toLowerCase().includes('mortgage') || cat.name.toLowerCase().includes('rent') || cat.name.toLowerCase().includes('land') || cat.name.toLowerCase().includes('lease') ? 'land_mortgage' :
+          cat.name.toLowerCase().includes('invest') || cat.name.toLowerCase().includes('return') || cat.name.toLowerCase().includes('dividend') ? 'investment' :
+          cat.name.toLowerCase().includes('business') || cat.name.toLowerCase().includes('trade') ? 'business' : 'other'
+        );
+        return { ...cat, income_type: inferredType };
+      }
+      return cat;
+    });
+
+    if (updated) {
+      this.set(STORAGE_KEYS.CATEGORIES, resultCats);
+    }
+
+    return resultCats.filter(c => c.workspace_id === workspaceId && !c.is_archived);
   }
 
   // Income Types Management
@@ -230,12 +275,63 @@ class DatabaseEngine {
     goals?: SavingsGoal[];
   }, workspaceId: string): void {
     if (data.accounts !== undefined) {
-      const otherAccs = this.get<FinancialAccount[]>(STORAGE_KEYS.ACCOUNTS, []).filter(a => a.workspace_id !== workspaceId);
-      this.set(STORAGE_KEYS.ACCOUNTS, [...otherAccs, ...data.accounts]);
+      const allAccs = this.get<FinancialAccount[]>(STORAGE_KEYS.ACCOUNTS, []);
+      const otherAccs = allAccs.filter(a => a.workspace_id !== workspaceId);
+      const localAccs = allAccs.filter(a => a.workspace_id === workspaceId);
+      const localMap = new Map(localAccs.map(a => [a.id, a]));
+      
+      const mergedAccs = data.accounts.map(remoteAcc => {
+        const local = localMap.get(remoteAcc.id);
+        return {
+          ...remoteAcc,
+          // Preserve local balance if remote cached balance is 0 and local has a non-zero balance
+          current_balance_cached: remoteAcc.current_balance_cached !== 0 
+            ? remoteAcc.current_balance_cached 
+            : (local?.current_balance_cached || remoteAcc.opening_balance || 0),
+        };
+      });
+
+      // Preserve any local accounts not yet fetched from remote
+      const remoteAccIds = new Set(data.accounts.map(a => a.id));
+      for (const local of localAccs) {
+        if (!remoteAccIds.has(local.id)) {
+          mergedAccs.push(local);
+          supabaseSync.syncAccount(local, workspaceId);
+        }
+      }
+
+      this.set(STORAGE_KEYS.ACCOUNTS, [...otherAccs, ...mergedAccs]);
     }
+
     if (data.categories !== undefined && data.categories.length > 0) {
-      const otherCats = this.get<Category[]>(STORAGE_KEYS.CATEGORIES, []).filter(c => c.workspace_id !== workspaceId);
-      this.set(STORAGE_KEYS.CATEGORIES, [...otherCats, ...data.categories]);
+      const allCats = this.get<Category[]>(STORAGE_KEYS.CATEGORIES, []);
+      const otherCats = allCats.filter(c => c.workspace_id !== workspaceId);
+      const localCats = allCats.filter(c => c.workspace_id === workspaceId);
+      const localMap = new Map(localCats.map(c => [c.id, c]));
+      const localNameMap = new Map(localCats.map(c => [c.name.toLowerCase(), c]));
+
+      const mergedCats: Category[] = [];
+      const seenIds = new Set<string>();
+
+      for (const remoteCat of data.categories) {
+        seenIds.add(remoteCat.id);
+        const local = localMap.get(remoteCat.id) || localNameMap.get(remoteCat.name.toLowerCase());
+        mergedCats.push({
+          ...remoteCat,
+          // CRITICAL: Preserve local income_type if remote does not have it (e.g. migration pending)
+          income_type: remoteCat.income_type || local?.income_type || (remoteCat.type === 'income' ? 'other' : undefined),
+        });
+      }
+
+      // Preserve any local categories created in the UI that haven't been fetched yet
+      for (const local of localCats) {
+        if (!seenIds.has(local.id) && !data.categories.some(r => r.name.toLowerCase() === local.name.toLowerCase())) {
+          mergedCats.push(local);
+          supabaseSync.syncCategory(local, workspaceId);
+        }
+      }
+
+      this.set(STORAGE_KEYS.CATEGORIES, [...otherCats, ...mergedCats]);
     }
     if (data.cards !== undefined) {
       const otherCards = this.get<CreditCard[]>(STORAGE_KEYS.CREDIT_CARDS, []).filter(c => c.workspace_id !== workspaceId);
@@ -300,6 +396,7 @@ class DatabaseEngine {
       { defaultId: `acc_unity_fund_${workspaceId}`, name: 'Unity Fund-2026', type: 'savings_dps', provider: 'Unity Fund', icon: 'flag', color: '#eab308' },
       { defaultId: `acc_los_fund_${workspaceId}`, name: 'LOS Fund', type: 'savings_dps', provider: 'LOS Fund', icon: 'layers', color: '#9333ea' },
       { defaultId: `acc_income_earned_${workspaceId}`, name: 'Earned Revenue & Income', type: 'income_salary', provider: 'Revenue', icon: 'trending-up', color: '#10b981' },
+      { defaultId: `acc_expense_operating_${workspaceId}`, name: 'General Operating Expenses', type: 'expense_operating', provider: 'Operating', icon: 'receipt', color: '#ef4444' },
       { defaultId: `acc_equity_offset_${workspaceId}`, name: 'Opening Balance Equity', type: 'opening_equity', provider: 'Equity', icon: 'scale', color: '#64748b' },
     ];
 
@@ -340,10 +437,52 @@ class DatabaseEngine {
     return this.getAccounts(workspaceId);
   }
 
-  // Financial Accounts
+  // Financial Accounts with Live Dynamic Ledger-Derived Balances
   getAccounts(workspaceId: string): FinancialAccount[] {
-    const list = this.get<FinancialAccount[]>(STORAGE_KEYS.ACCOUNTS, []);
-    return list.filter(a => a.workspace_id === workspaceId);
+    const list = this.get<FinancialAccount[]>(STORAGE_KEYS.ACCOUNTS, []).filter(a => a.workspace_id === workspaceId);
+    const lines = this.get<JournalLine[]>(STORAGE_KEYS.JOURNAL_LINES, []).filter(l => l.workspace_id === workspaceId);
+    const entries = this.get<JournalEntry[]>(STORAGE_KEYS.JOURNAL_ENTRIES, []).filter(e => e.workspace_id === workspaceId);
+
+    const validEntryIds = new Set(
+      entries.filter(e => e.status === 'posted').map(e => e.id)
+    );
+
+    const debitSums = new Map<string, number>();
+    const creditSums = new Map<string, number>();
+
+    for (const l of lines) {
+      if (!validEntryIds.has(l.journal_entry_id)) continue;
+      const amt = Number(l.amount) || 0;
+      if (l.line_type === 'debit') {
+        debitSums.set(l.account_id, (debitSums.get(l.account_id) || 0) + amt);
+      } else {
+        creditSums.set(l.account_id, (creditSums.get(l.account_id) || 0) + amt);
+      }
+    }
+
+    const normalDebitTypes = new Set([
+      'cash', 'bank', 'mfs', 'savings_dps', 'investment', 
+      'receivable', 'property_asset', 'expense_operating', 'expense_finance'
+    ]);
+
+    return list.map(a => {
+      const d = debitSums.get(a.id) || 0;
+      const c = creditSums.get(a.id) || 0;
+      const hasLines = debitSums.has(a.id) || creditSums.has(a.id);
+      let calculatedBalance: number;
+
+      if (normalDebitTypes.has(a.account_type_id)) {
+        calculatedBalance = hasLines ? (d - c) : (Number(a.opening_balance) || Number(a.current_balance_cached) || 0);
+      } else {
+        // Credit normal (credit_card, loan_payable, equity, income)
+        calculatedBalance = hasLines ? (c - d) : (Number(a.opening_balance) || Number(a.current_balance_cached) || 0);
+      }
+
+      return {
+        ...a,
+        current_balance_cached: Math.round(calculatedBalance * 100) / 100,
+      };
+    });
   }
 
   saveAccount(account: FinancialAccount): void {

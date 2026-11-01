@@ -112,6 +112,7 @@ export const WorkspaceProvider: React.FC<WorkspaceProviderProps> = ({ children, 
         if (!isMounted) return;
 
         db.ensureDefaultAccountsForWorkspace(active.id);
+        db.ensureCategoriesForWorkspace(active.id);
         setWorkspaces(userWorkspaces);
         setCurrentWorkspace(active);
         localStorage.setItem(userActiveWsKey, active.id);
@@ -121,6 +122,7 @@ export const WorkspaceProvider: React.FC<WorkspaceProviderProps> = ({ children, 
         const remote = await supabaseSync.pullRemoteWorkspaceData(active.id);
         if (remote && isMounted) {
           db.hydrateFromSupabase(remote, active.id);
+          db.ensureCategoriesForWorkspace(active.id);
           setLastDbSyncTime(new Date().toLocaleTimeString());
           setRefreshKey(prev => prev + 1);
         }
@@ -141,6 +143,8 @@ export const WorkspaceProvider: React.FC<WorkspaceProviderProps> = ({ children, 
   const switchWorkspace = (workspaceId: string) => {
     const found = workspaces.find(w => w.id === workspaceId);
     if (found) {
+      db.ensureDefaultAccountsForWorkspace(found.id);
+      db.ensureCategoriesForWorkspace(found.id);
       setCurrentWorkspace(found);
       localStorage.setItem(`pom_active_workspace_${authUser.id}`, found.id);
       setUserRole(found.created_by === authUser.id ? 'owner' : 'editor');

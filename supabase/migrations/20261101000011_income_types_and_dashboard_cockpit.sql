@@ -3,10 +3,11 @@
 -- DESCRIPTION: 
 -- 1. Adds 'income_type' column to public.categories for macro stream classification
 --    (e.g., 'salary', 'remote_freelance', 'land_mortgage', 'business', 'investment', 'other').
--- 2. Ensures standard operating revenue and expense accounts can be linked in financial_accounts.
--- 3. Updates default categories with appropriate income types.
--- 4. Ensures RLS policies allow authorized members to manage categories and settings.
--- EXECUTION: Run this script in your Supabase Project SQL Editor (https://supabase.com/dashboard/project/_/sql).
+-- 2. Creates automated Postgres trigger to recalculate financial_accounts.current_balance_cached
+--    in real time on every journal_lines insertion, modification, or deletion.
+-- 3. Ensures RLS policies allow authorized members to manage categories and settings.
+-- 4. Initial balance reconciliation for all existing accounts from journal lines.
+-- EXECUTION: Run this script directly in your Supabase Project SQL Editor (https://supabase.com/dashboard/project/_/sql).
 -- ==============================================================================
 
 -- 1. Add income_type column to categories
@@ -29,13 +30,70 @@ SET income_type = CASE
 END
 WHERE type = 'income' AND (income_type IS NULL OR income_type = 'other');
 
--- 3. Confirm RLS policy on categories allows authorized members to insert, update, delete
+-- 3. Real-time Account Balance Recalculation Trigger on Journal Lines
+CREATE OR REPLACE FUNCTION public.recalculate_account_balance_on_line()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public, pg_temp
+AS $$
+DECLARE
+    v_account_id UUID;
+BEGIN
+    v_account_id := COALESCE(NEW.account_id, OLD.account_id);
+    IF v_account_id IS NOT NULL THEN
+        UPDATE public.financial_accounts fa
+        SET current_balance_cached = COALESCE((
+            SELECT SUM(
+                CASE 
+                    WHEN act.normal_balance = 'debit' THEN
+                        (CASE WHEN jl.line_type = 'debit' THEN jl.amount ELSE -jl.amount END)
+                    ELSE
+                        (CASE WHEN jl.line_type = 'credit' THEN jl.amount ELSE -jl.amount END)
+                END
+            )
+            FROM public.journal_lines jl
+            JOIN public.journal_entries je ON jl.journal_entry_id = je.id AND je.status = 'posted'
+            JOIN public.account_types act ON fa.account_type_id = act.id
+            WHERE jl.account_id = v_account_id
+        ), fa.opening_balance, 0.00),
+        updated_at = timezone('utc'::text, now())
+        WHERE fa.id = v_account_id;
+    END IF;
+    RETURN NULL;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_recalculate_account_balance ON public.journal_lines;
+CREATE TRIGGER trg_recalculate_account_balance
+AFTER INSERT OR UPDATE OR DELETE ON public.journal_lines
+FOR EACH ROW
+EXECUTE FUNCTION public.recalculate_account_balance_on_line();
+
+-- 4. Initial Balance Synchronization for all Existing Accounts
+UPDATE public.financial_accounts fa
+SET current_balance_cached = COALESCE((
+    SELECT SUM(
+        CASE 
+            WHEN act.normal_balance = 'debit' THEN
+                (CASE WHEN jl.line_type = 'debit' THEN jl.amount ELSE -jl.amount END)
+            ELSE
+                (CASE WHEN jl.line_type = 'credit' THEN jl.amount ELSE -jl.amount END)
+        END
+    )
+    FROM public.journal_lines jl
+    JOIN public.journal_entries je ON jl.journal_entry_id = je.id AND je.status = 'posted'
+    JOIN public.account_types act ON fa.account_type_id = act.id
+    WHERE jl.account_id = fa.id
+), fa.opening_balance, 0.00);
+
+-- 5. Confirm RLS policy on categories allows authorized members to insert, update, delete
 DROP POLICY IF EXISTS "Authorized members can manage categories" ON public.categories;
 CREATE POLICY "Authorized members can manage categories"
     ON public.categories FOR ALL
     USING (public.can_write_workspace(workspace_id))
     WITH CHECK (public.can_write_workspace(workspace_id));
 
--- 4. Verification queries (you can run this to verify schema health)
+-- 6. Verification queries
 -- SELECT column_name, data_type FROM information_schema.columns WHERE table_name = 'categories' AND column_name = 'income_type';
--- SELECT id, name, type, income_type FROM public.categories WHERE type = 'income' LIMIT 10;
+-- SELECT id, name, current_balance_cached FROM public.financial_accounts LIMIT 10;

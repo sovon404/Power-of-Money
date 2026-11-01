@@ -85,19 +85,27 @@ export const AccountsLiveCockpit: React.FC<AccountsLiveCockpitProps> = ({
   const journalEntries = db.getJournalEntries(workspaceId);
   const categories = db.getCategories(workspaceId);
   const incomeCategoryIds = new Set(categories.filter(c => c.type === 'income').map(c => c.id));
+  const defaultIncomeAccUuid = toUuid(`acc_income_earned_${workspaceId}`);
 
   const totalEarnedRevenue = journalEntries
     .filter(e => e.status === 'posted')
     .reduce((sum, e) => {
-      const entryIncome = e.lines?.reduce((lineSum, l) => {
-        if (l.line_type === 'credit') {
-          if (l.category_id && incomeCategoryIds.has(l.category_id)) {
-            return lineSum + l.amount;
-          }
-        }
-        return lineSum;
-      }, 0) || 0;
-      return sum + entryIncome;
+      const incomeLine = e.lines?.find(l => 
+        (l.line_type === 'credit' && (
+          (l.category_id && incomeCategoryIds.has(l.category_id)) ||
+          l.account_id === defaultIncomeAccUuid ||
+          allAccounts.find(a => a.id === l.account_id)?.account_type_id?.startsWith('income') ||
+          l.memo?.toLowerCase().includes('salary') ||
+          l.memo?.toLowerCase().includes('income') ||
+          l.memo?.toLowerCase().includes('freelance') ||
+          l.memo?.toLowerCase().includes('mortgage')
+        )) ||
+        (l.category_id && incomeCategoryIds.has(l.category_id))
+      );
+      if (incomeLine) {
+        return sum + Number(incomeLine.amount);
+      }
+      return sum;
     }, 0);
 
   // Dynamic Subtotals
@@ -240,11 +248,45 @@ export const AccountsLiveCockpit: React.FC<AccountsLiveCockpitProps> = ({
     e.preventDefault();
     setIsSubmitting(true);
     try {
+      const equityAccId = toUuid(`acc_equity_offset_${workspaceId}`);
       for (const acc of editAccountsList) {
+        const original = allAccounts.find(a => a.id === acc.id);
+        const originalBal = Number(original?.current_balance_cached) || 0;
+        const newBal = Number(acc.current_balance_cached) || 0;
+        const diff = Math.round((newBal - originalBal) * 100) / 100;
+
         db.saveAccount({
           ...acc,
-          current_balance_cached: Number(acc.current_balance_cached) || 0,
+          current_balance_cached: newBal,
         });
+
+        // If user changed the balance, establish a balancing calibration journal entry
+        if (Math.abs(diff) > 0.001) {
+          const isDebitNormal = ['cash', 'bank', 'mfs', 'savings_dps', 'investment', 'receivable'].includes(acc.account_type_id);
+          const isIncrease = diff > 0;
+          const absDiff = Math.abs(diff);
+
+          let debitAcc = equityAccId;
+          let creditAcc = acc.id;
+
+          if (isDebitNormal) {
+            debitAcc = isIncrease ? acc.id : equityAccId;
+            creditAcc = isIncrease ? equityAccId : acc.id;
+          } else {
+            debitAcc = isIncrease ? equityAccId : acc.id;
+            creditAcc = isIncrease ? acc.id : equityAccId;
+          }
+
+          db.postJournalEntry(workspaceId, {
+            memo: `Balance calibration for ${acc.name}`,
+            source_type: 'opening_balance',
+            entry_date: new Date().toISOString().split('T')[0],
+            lines: [
+              { account_id: debitAcc, line_type: 'debit', amount: absDiff, memo: `Calibrate ${acc.name}` },
+              { account_id: creditAcc, line_type: 'credit', amount: absDiff, memo: `Calibrate ${acc.name} Offset` },
+            ],
+          });
+        }
       }
       refreshData();
       setIsEditModalOpen(false);

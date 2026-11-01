@@ -113,9 +113,18 @@ export const IncomeView: React.FC = () => {
     rawEntry: JournalEntry;
   }
 
+  // Ensure income categories are initialized
+  React.useEffect(() => {
+    if (workspaceId) {
+      db.ensureCategoriesForWorkspace(workspaceId);
+    }
+  }, [workspaceId]);
+
   const incomeRecords: IncomeRecord[] = useMemo(() => {
     const records: IncomeRecord[] = [];
     const incomeCatMap = new Map(incomeCategories.map(c => [c.id, c]));
+    const allCatMap = new Map(categories.map(c => [c.id, c]));
+    const defaultIncomeAccUuid = toUuid(`acc_income_earned_${workspaceId}`);
 
     journalEntries.forEach(entry => {
       if (entry.status !== 'posted') return;
@@ -125,26 +134,54 @@ export const IncomeView: React.FC = () => {
       const creditLine = entry.lines?.find(l => l.line_type === 'credit');
       const debitLine = entry.lines?.find(l => l.line_type === 'debit');
 
+      // Check credit account
+      const creditAcc = creditLine ? accounts.find(a => a.id === creditLine.account_id) : undefined;
+      const isCreditToIncome = Boolean(
+        creditLine && (
+          creditLine.account_id === defaultIncomeAccUuid ||
+          creditAcc?.account_type_id?.startsWith('income') ||
+          creditAcc?.name.toLowerCase().includes('income') ||
+          creditAcc?.name.toLowerCase().includes('revenue')
+        )
+      );
+
       // Check if this entry represents income
       const isIncome = Boolean(
         incomeCatLine ||
+        isCreditToIncome ||
         (creditLine && (
-          creditLine.account_id?.includes('income') || 
           creditLine.memo?.toLowerCase().includes('salary') || 
-          creditLine.memo?.toLowerCase().includes('income')
+          creditLine.memo?.toLowerCase().includes('income') ||
+          creditLine.memo?.toLowerCase().includes('freelance') ||
+          creditLine.memo?.toLowerCase().includes('mortgage')
         )) ||
-        (entry.memo && (entry.memo.toLowerCase().includes('salary') || entry.memo.toLowerCase().includes('freelance') || entry.memo.toLowerCase().includes('mortgage')))
+        (entry.memo && (
+          entry.memo.toLowerCase().includes('salary') || 
+          entry.memo.toLowerCase().includes('freelance') || 
+          entry.memo.toLowerCase().includes('mortgage') ||
+          entry.memo.toLowerCase().includes('earned revenue')
+        ))
       );
 
       if (!isIncome) return;
 
       const catId = incomeCatLine?.category_id || creditLine?.category_id || debitLine?.category_id;
-      const cat = catId ? incomeCatMap.get(catId) : undefined;
+      const cat = catId ? (incomeCatMap.get(catId) || allCatMap.get(catId)) : undefined;
       const depositAcc = debitLine ? accounts.find(a => a.id === debitLine.account_id) : undefined;
       const amount = incomeCatLine?.amount || creditLine?.amount || debitLine?.amount || 0;
 
       // Derive income type
-      const typeId = cat?.income_type || 'other';
+      let typeId = cat?.income_type;
+      if (!typeId) {
+        const catNameLower = (cat?.name || entry.memo || '').toLowerCase();
+        if (catNameLower.includes('salary') || catNameLower.includes('bonus') || catNameLower.includes('allowance')) typeId = 'salary';
+        else if (catNameLower.includes('freelance') || catNameLower.includes('remote') || catNameLower.includes('contract')) typeId = 'remote_freelance';
+        else if (catNameLower.includes('mortgage') || catNameLower.includes('rent') || catNameLower.includes('land') || catNameLower.includes('lease')) typeId = 'land_mortgage';
+        else if (catNameLower.includes('invest') || catNameLower.includes('return') || catNameLower.includes('dividend')) typeId = 'investment';
+        else if (catNameLower.includes('business') || catNameLower.includes('trade')) typeId = 'business';
+        else typeId = 'other';
+      }
+
       const typeInfo = incomeTypeMap.get(typeId);
 
       records.push({
@@ -168,7 +205,7 @@ export const IncomeView: React.FC = () => {
     });
 
     return records.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  }, [journalEntries, incomeCategories, accounts, incomeTypeMap]);
+  }, [journalEntries, incomeCategories, categories, accounts, incomeTypeMap, workspaceId]);
 
   // Total inflow
   const totalInflow = useMemo(() => {
