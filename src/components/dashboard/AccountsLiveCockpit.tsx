@@ -19,6 +19,7 @@ import { useWorkspace } from '../../context/WorkspaceContext';
 import { db } from '../../services/db';
 import { FinancialAccount } from '../../types';
 import { toUuid } from '../../lib/uuid';
+import { NumericInput } from '../common/NumericInput';
 
 interface AccountsLiveCockpitProps {
   onNavigateAccounts?: () => void;
@@ -476,9 +477,8 @@ export const AccountsLiveCockpit: React.FC<AccountsLiveCockpitProps> = ({
                     <label className="block text-2xs font-semibold text-slate-600 dark:text-slate-400 mb-1">
                       Balance (BDT ৳)
                     </label>
-                    <input
-                      type="number"
-                      step="0.01"
+                    <NumericInput
+                      placeholder="0.00"
                       value={editCash}
                       onChange={(e) => setEditCash(e.target.value)}
                       className="w-full px-2.5 py-1.5 text-xs font-mono rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
@@ -505,9 +505,8 @@ export const AccountsLiveCockpit: React.FC<AccountsLiveCockpitProps> = ({
                     <label className="block text-2xs font-semibold text-slate-600 dark:text-slate-400 mb-1">
                       Balance (BDT ৳)
                     </label>
-                    <input
-                      type="number"
-                      step="0.01"
+                    <NumericInput
+                      placeholder="0.00"
                       value={editBank}
                       onChange={(e) => setEditBank(e.target.value)}
                       className="w-full px-2.5 py-1.5 text-xs font-mono rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
@@ -534,9 +533,8 @@ export const AccountsLiveCockpit: React.FC<AccountsLiveCockpitProps> = ({
                     <label className="block text-2xs font-semibold text-slate-600 dark:text-slate-400 mb-1">
                       Balance (BDT ৳)
                     </label>
-                    <input
-                      type="number"
-                      step="0.01"
+                    <NumericInput
+                      placeholder="0.00"
                       value={editBkash}
                       onChange={(e) => setEditBkash(e.target.value)}
                       className="w-full px-2.5 py-1.5 text-xs font-mono rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
@@ -563,9 +561,8 @@ export const AccountsLiveCockpit: React.FC<AccountsLiveCockpitProps> = ({
                     <label className="block text-2xs font-semibold text-slate-600 dark:text-slate-400 mb-1">
                       Balance (BDT ৳)
                     </label>
-                    <input
-                      type="number"
-                      step="0.01"
+                    <NumericInput
+                      placeholder="0.00"
                       value={editNagad}
                       onChange={(e) => setEditNagad(e.target.value)}
                       className="w-full px-2.5 py-1.5 text-xs font-mono rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
@@ -592,9 +589,8 @@ export const AccountsLiveCockpit: React.FC<AccountsLiveCockpitProps> = ({
                     <label className="block text-2xs font-semibold text-slate-600 dark:text-slate-400 mb-1">
                       Balance (BDT ৳)
                     </label>
-                    <input
-                      type="number"
-                      step="0.01"
+                    <NumericInput
+                      placeholder="0.00"
                       value={editDspf}
                       onChange={(e) => setEditDspf(e.target.value)}
                       className="w-full px-2.5 py-1.5 text-xs font-mono rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
@@ -621,9 +617,8 @@ export const AccountsLiveCockpit: React.FC<AccountsLiveCockpitProps> = ({
                     <label className="block text-2xs font-semibold text-slate-600 dark:text-slate-400 mb-1">
                       Balance (BDT ৳)
                     </label>
-                    <input
-                      type="number"
-                      step="0.01"
+                    <NumericInput
+                      placeholder="0.00"
                       value={editUnity}
                       onChange={(e) => setEditUnity(e.target.value)}
                       className="w-full px-2.5 py-1.5 text-xs font-mono rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
@@ -650,9 +645,8 @@ export const AccountsLiveCockpit: React.FC<AccountsLiveCockpitProps> = ({
                     <label className="block text-2xs font-semibold text-slate-600 dark:text-slate-400 mb-1">
                       Balance (BDT ৳)
                     </label>
-                    <input
-                      type="number"
-                      step="0.01"
+                    <NumericInput
+                      placeholder="0.00"
                       value={editLos}
                       onChange={(e) => setEditLos(e.target.value)}
                       className="w-full px-2.5 py-1.5 text-xs font-mono rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
@@ -679,9 +673,8 @@ export const AccountsLiveCockpit: React.FC<AccountsLiveCockpitProps> = ({
                     <label className="block text-2xs font-semibold text-rose-700 dark:text-rose-400 mb-1">
                       Due Amount (BDT ৳)
                     </label>
-                    <input
-                      type="number"
-                      step="0.01"
+                    <NumericInput
+                      placeholder="0.00"
                       value={editCardDue}
                       onChange={(e) => setEditCardDue(e.target.value)}
                       className="w-full px-2.5 py-1.5 text-xs font-mono rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-white"

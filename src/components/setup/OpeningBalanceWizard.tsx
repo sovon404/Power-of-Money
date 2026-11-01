@@ -14,6 +14,7 @@ import {
 import { useWorkspace } from '../../context/WorkspaceContext';
 import { db } from '../../services/db';
 import { FinancialAccount, Loan, Property } from '../../types';
+import { NumericInput } from '../common/NumericInput';
 
 export const OpeningBalanceWizard: React.FC = () => {
   const { currentWorkspace, formatMoney, completeInitialSetup, refreshData } = useWorkspace();
@@ -187,9 +188,8 @@ export const OpeningBalanceWizard: React.FC = () => {
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                   Cash in Hand
                 </label>
-                <input
-                  type="number"
-                  step="0.01"
+                <NumericInput
+                  placeholder="0.00"
                   value={cashBalance}
                   onChange={(e) => setCashBalance(e.target.value)}
                   className="w-full px-3 py-2 text-xs font-mono font-semibold rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
@@ -208,9 +208,8 @@ export const OpeningBalanceWizard: React.FC = () => {
                     className="w-1/2 px-2.5 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
                     placeholder="Bank Name"
                   />
-                  <input
-                    type="number"
-                    step="0.01"
+                  <NumericInput
+                    placeholder="0.00"
                     value={bankBalance}
                     onChange={(e) => setBankBalance(e.target.value)}
                     className="w-1/2 px-2.5 py-2 text-xs font-mono font-semibold rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
@@ -222,9 +221,8 @@ export const OpeningBalanceWizard: React.FC = () => {
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                   bKash Wallet Balance
                 </label>
-                <input
-                  type="number"
-                  step="0.01"
+                <NumericInput
+                  placeholder="0.00"
                   value={bkashBalance}
                   onChange={(e) => setBkashBalance(e.target.value)}
                   className="w-full px-3 py-2 text-xs font-mono font-semibold rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
@@ -235,9 +233,8 @@ export const OpeningBalanceWizard: React.FC = () => {
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                   Nagad Wallet Balance
                 </label>
-                <input
-                  type="number"
-                  step="0.01"
+                <NumericInput
+                  placeholder="0.00"
                   value={nagadBalance}
                   onChange={(e) => setNagadBalance(e.target.value)}
                   className="w-full px-3 py-2 text-xs font-mono font-semibold rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"

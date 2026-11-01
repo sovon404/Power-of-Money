@@ -18,6 +18,7 @@ import {
 import { useWorkspace } from '../../context/WorkspaceContext';
 import { db } from '../../services/db';
 import { FinancialAccount } from '../../types';
+import { NumericInput } from '../common/NumericInput';
 
 export const AccountsView: React.FC = () => {
   const { currentWorkspace, formatMoney, refreshData, canWrite } = useWorkspace();
@@ -439,9 +440,7 @@ export const AccountsView: React.FC = () => {
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Opening Balance ({currentWorkspace?.currency || 'BDT'})
                   </label>
-                  <input
-                    type="number"
-                    step="0.01"
+                  <NumericInput
                     placeholder="0.00"
                     value={openingBalance}
                     onChange={(e) => setOpeningBalance(e.target.value)}
@@ -453,8 +452,8 @@ export const AccountsView: React.FC = () => {
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Masked Number (Last 4)
                   </label>
-                  <input
-                    type="text"
+                  <NumericInput
+                    allowDecimal={false}
                     maxLength={4}
                     placeholder="e.g. 7597"
                     value={accountMasked}
@@ -568,10 +567,7 @@ export const AccountsView: React.FC = () => {
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Amount ({currentWorkspace?.currency || 'BDT'})
                   </label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0.01"
+                  <NumericInput
                     placeholder="0.00"
                     value={transferAmount}
                     onChange={(e) => setTransferAmount(e.target.value)}
@@ -689,9 +685,8 @@ export const AccountsView: React.FC = () => {
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Current Balance ({currentWorkspace?.currency || 'BDT'})
                   </label>
-                  <input
-                    type="number"
-                    step="0.01"
+                  <NumericInput
+                    placeholder="0.00"
                     value={editBalance}
                     onChange={(e) => setEditBalance(e.target.value)}
                     className="w-full px-3 py-2 text-xs font-mono rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"

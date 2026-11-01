@@ -14,6 +14,7 @@ import { useWorkspace } from '../../context/WorkspaceContext';
 import { db } from '../../services/db';
 import { Budget } from '../../types';
 import { EditableSelect } from '../common/EditableSelect';
+import { NumericInput } from '../common/NumericInput';
 
 export const BudgetsView: React.FC = () => {
   const { currentWorkspace, formatMoney, refreshData, canWrite } = useWorkspace();
@@ -313,10 +314,7 @@ export const BudgetsView: React.FC = () => {
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Monthly Limit ({currentWorkspace?.currency || 'BDT'})
                   </label>
-                  <input
-                    type="number"
-                    step="500"
-                    min="1"
+                  <NumericInput
                     placeholder="15000"
                     value={budgetAmt}
                     onChange={(e) => setBudgetAmt(e.target.value)}
@@ -329,10 +327,10 @@ export const BudgetsView: React.FC = () => {
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Alert Threshold (%)
                   </label>
-                  <input
-                    type="number"
-                    min="10"
-                    max="100"
+                  <NumericInput
+                    allowDecimal={false}
+                    maxLength={3}
+                    placeholder="85"
                     value={alertThreshold}
                     onChange={(e) => setAlertThreshold(e.target.value)}
                     className="w-full px-3 py-2 text-xs font-mono rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
@@ -392,10 +390,8 @@ export const BudgetsView: React.FC = () => {
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Monthly Limit ({currentWorkspace?.currency || 'BDT'})
                   </label>
-                  <input
-                    type="number"
-                    step="500"
-                    min="1"
+                  <NumericInput
+                    placeholder="15000"
                     value={editAmount}
                     onChange={(e) => setEditAmount(e.target.value)}
                     className="w-full px-3 py-2 text-xs font-mono rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
@@ -407,10 +403,10 @@ export const BudgetsView: React.FC = () => {
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Alert Threshold (%)
                   </label>
-                  <input
-                    type="number"
-                    min="10"
-                    max="100"
+                  <NumericInput
+                    allowDecimal={false}
+                    maxLength={3}
+                    placeholder="85"
                     value={editThreshold}
                     onChange={(e) => setEditThreshold(e.target.value)}
                     className="w-full px-3 py-2 text-xs font-mono rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"

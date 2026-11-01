@@ -17,6 +17,7 @@ import {
 import { useWorkspace } from '../../context/WorkspaceContext';
 import { db } from '../../services/db';
 import { Loan, FinancialAccount } from '../../types';
+import { NumericInput } from '../common/NumericInput';
 
 export const LoansView: React.FC = () => {
   const { currentWorkspace, formatMoney, refreshData, canWrite } = useWorkspace();
@@ -629,10 +630,7 @@ export const LoansView: React.FC = () => {
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Principal Amount ({currentWorkspace?.currency || 'BDT'})
                   </label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="1"
+                  <NumericInput
                     placeholder="50000"
                     value={principal}
                     onChange={(e) => setPrincipal(e.target.value)}
@@ -746,10 +744,7 @@ export const LoansView: React.FC = () => {
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Principal Amount
                   </label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
+                  <NumericInput
                     placeholder="0.00"
                     value={principalPayment}
                     onChange={(e) => setPrincipalPayment(e.target.value)}

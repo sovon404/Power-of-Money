@@ -12,6 +12,7 @@ import {
 import { useWorkspace } from '../../context/WorkspaceContext';
 import { db } from '../../services/db';
 import { RecurringRule } from '../../types';
+import { NumericInput } from '../common/NumericInput';
 
 export const RecurringBillsView: React.FC = () => {
   const { currentWorkspace, formatMoney, refreshData, canWrite } = useWorkspace();
@@ -258,10 +259,7 @@ export const RecurringBillsView: React.FC = () => {
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Amount ({currentWorkspace?.currency || 'BDT'})
                   </label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="1"
+                  <NumericInput
                     placeholder="1250"
                     value={amount}
                     onChange={(e) => setAmount(e.target.value)}

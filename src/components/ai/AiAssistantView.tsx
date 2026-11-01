@@ -15,6 +15,7 @@ import {
 import { useWorkspace } from '../../context/WorkspaceContext';
 import { db } from '../../services/db';
 import { ReceiptScanResult } from '../../types';
+import { NumericInput } from '../common/NumericInput';
 
 export const AiAssistantView: React.FC = () => {
   const { currentWorkspace, formatMoney, refreshData, canWrite } = useWorkspace();
@@ -374,10 +375,9 @@ export const AiAssistantView: React.FC = () => {
                     <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                       Total Amount ({scanResult.currency || 'BDT'})
                     </label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={scanResult.amount}
+                    <NumericInput
+                      placeholder="0.00"
+                      value={scanResult.amount || ''}
                       onChange={(e) => setScanResult({ ...scanResult, amount: parseFloat(e.target.value) || 0 })}
                       className="w-full px-3 py-2 text-xs font-mono font-semibold rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
                       required

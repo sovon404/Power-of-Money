@@ -14,6 +14,7 @@ import {
 import { useWorkspace } from '../../context/WorkspaceContext';
 import { db } from '../../services/db';
 import { SavingsGoal } from '../../types';
+import { NumericInput } from '../common/NumericInput';
 
 export const SavingsGoalsView: React.FC = () => {
   const { currentWorkspace, formatMoney, refreshData, canWrite } = useWorkspace();
@@ -366,10 +367,7 @@ export const SavingsGoalsView: React.FC = () => {
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Target Amount ({currentWorkspace?.currency || 'BDT'})
                   </label>
-                  <input
-                    type="number"
-                    step="1000"
-                    min="1"
+                  <NumericInput
                     placeholder="300000"
                     value={targetAmount}
                     onChange={(e) => setTargetAmount(e.target.value)}
@@ -384,9 +382,7 @@ export const SavingsGoalsView: React.FC = () => {
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Monthly Contribution
                   </label>
-                  <input
-                    type="number"
-                    step="500"
+                  <NumericInput
                     placeholder="5000"
                     value={monthlyContribution}
                     onChange={(e) => setMonthlyContribution(e.target.value)}
@@ -479,10 +475,8 @@ export const SavingsGoalsView: React.FC = () => {
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                   Installment Amount
                 </label>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="1"
+                <NumericInput
+                  placeholder="0.00"
                   value={contributeAmount}
                   onChange={(e) => setContributeAmount(e.target.value)}
                   className="w-full px-3 py-2 text-xs font-mono font-semibold rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
@@ -545,9 +539,8 @@ export const SavingsGoalsView: React.FC = () => {
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Target Goal ({currentWorkspace?.currency || 'BDT'})
                   </label>
-                  <input
-                    type="number"
-                    step="0.01"
+                  <NumericInput
+                    placeholder="0.00"
                     value={editTargetAmount}
                     onChange={(e) => setEditTargetAmount(e.target.value)}
                     className="w-full px-3 py-2 text-xs font-mono font-semibold rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
@@ -559,9 +552,8 @@ export const SavingsGoalsView: React.FC = () => {
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Current Saved
                   </label>
-                  <input
-                    type="number"
-                    step="0.01"
+                  <NumericInput
+                    placeholder="0.00"
                     value={editCurrentSaved}
                     onChange={(e) => setEditCurrentSaved(e.target.value)}
                     className="w-full px-3 py-2 text-xs font-mono rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
@@ -574,9 +566,8 @@ export const SavingsGoalsView: React.FC = () => {
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Monthly Installment
                   </label>
-                  <input
-                    type="number"
-                    step="0.01"
+                  <NumericInput
+                    placeholder="0.00"
                     value={editMonthlyContribution}
                     onChange={(e) => setEditMonthlyContribution(e.target.value)}
                     className="w-full px-3 py-2 text-xs font-mono rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"

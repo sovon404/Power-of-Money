@@ -8,6 +8,6 @@
   
   .font-mono, [class*="tabular-nums"] {
     font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-    font-feature-settings: "tnum" 1, "cv01" 1;
+    font-feature-settings: "tnum" 1;
   }
 }

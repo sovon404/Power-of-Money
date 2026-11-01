@@ -20,6 +20,7 @@ import { CreditCard, FinancialAccount, JournalEntry } from '../../types';
 import { toUuid } from '../../lib/uuid';
 import { supabaseSync } from '../../services/supabaseSync';
 import { NewTransactionModal } from '../modals/NewTransactionModal';
+import { NumericInput } from '../common/NumericInput';
 
 export const CreditCardsView: React.FC = () => {
   const { currentWorkspace, formatMoney, refreshData, canWrite } = useWorkspace();
@@ -769,9 +770,7 @@ export const CreditCardsView: React.FC = () => {
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Credit Limit ({currentWorkspace?.currency || 'BDT'})
                   </label>
-                  <input
-                    type="number"
-                    step="100"
+                  <NumericInput
                     placeholder="100000"
                     value={creditLimit}
                     onChange={(e) => setCreditLimit(e.target.value)}
@@ -786,10 +785,10 @@ export const CreditCardsView: React.FC = () => {
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Statement Day (Day of Month)
                   </label>
-                  <input
-                    type="number"
-                    min="1"
-                    max="31"
+                  <NumericInput
+                    allowDecimal={false}
+                    maxLength={2}
+                    placeholder="1"
                     value={statementDay}
                     onChange={(e) => setStatementDay(e.target.value)}
                     className="w-full px-3 py-2 text-xs font-mono rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
@@ -801,10 +800,10 @@ export const CreditCardsView: React.FC = () => {
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Payment Due Day
                   </label>
-                  <input
-                    type="number"
-                    min="1"
-                    max="31"
+                  <NumericInput
+                    allowDecimal={false}
+                    maxLength={2}
+                    placeholder="25"
                     value={dueDay}
                     onChange={(e) => setDueDay(e.target.value)}
                     className="w-full px-3 py-2 text-xs font-mono rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
@@ -893,10 +892,7 @@ export const CreditCardsView: React.FC = () => {
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Payment Amount
                   </label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0.01"
+                  <NumericInput
                     placeholder="0.00"
                     value={payAmount}
                     onChange={(e) => setPayAmount(e.target.value)}
@@ -988,10 +984,7 @@ export const CreditCardsView: React.FC = () => {
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Amount (BDT ৳)
                   </label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0.01"
+                  <NumericInput
                     placeholder="0.00"
                     value={chargeAmount}
                     onChange={(e) => setChargeAmount(e.target.value)}
@@ -1140,9 +1133,8 @@ export const CreditCardsView: React.FC = () => {
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Credit Limit (BDT ৳)
                   </label>
-                  <input
-                    type="number"
-                    step="1"
+                  <NumericInput
+                    placeholder="0.00"
                     value={editCreditLimit}
                     onChange={(e) => setEditCreditLimit(e.target.value)}
                     className="w-full px-3 py-2 text-xs font-mono font-semibold rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
@@ -1156,10 +1148,10 @@ export const CreditCardsView: React.FC = () => {
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Statement Day (1-31)
                   </label>
-                  <input
-                    type="number"
-                    min="1"
-                    max="31"
+                  <NumericInput
+                    allowDecimal={false}
+                    maxLength={2}
+                    placeholder="1"
                     value={editStatementDay}
                     onChange={(e) => setEditStatementDay(e.target.value)}
                     className="w-full px-3 py-2 text-xs font-mono rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
@@ -1169,10 +1161,10 @@ export const CreditCardsView: React.FC = () => {
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Payment Due Day (1-31)
                   </label>
-                  <input
-                    type="number"
-                    min="1"
-                    max="31"
+                  <NumericInput
+                    allowDecimal={false}
+                    maxLength={2}
+                    placeholder="25"
                     value={editDueDay}
                     onChange={(e) => setEditDueDay(e.target.value)}
                     className="w-full px-3 py-2 text-xs font-mono rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
@@ -1185,9 +1177,8 @@ export const CreditCardsView: React.FC = () => {
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Interest APR (%)
                   </label>
-                  <input
-                    type="number"
-                    step="0.1"
+                  <NumericInput
+                    placeholder="0.0"
                     value={editApr}
                     onChange={(e) => setEditApr(e.target.value)}
                     className="w-full px-3 py-2 text-xs font-mono rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
@@ -1197,9 +1188,8 @@ export const CreditCardsView: React.FC = () => {
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Annual Fee (BDT ৳)
                   </label>
-                  <input
-                    type="number"
-                    step="1"
+                  <NumericInput
+                    placeholder="0"
                     value={editAnnualFee}
                     onChange={(e) => setEditAnnualFee(e.target.value)}
                     className="w-full px-3 py-2 text-xs font-mono rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"

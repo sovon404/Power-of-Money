@@ -18,6 +18,7 @@ import {
 import { useWorkspace } from '../../context/WorkspaceContext';
 import { db } from '../../services/db';
 import { Property } from '../../types';
+import { NumericInput } from '../common/NumericInput';
 
 export const PropertyRegisterView: React.FC = () => {
   const { currentWorkspace, formatMoney, refreshData, canWrite } = useWorkspace();
@@ -487,11 +488,7 @@ export const PropertyRegisterView: React.FC = () => {
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Normalized Share % (Optional)
                   </label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    max="100"
+                  <NumericInput
                     placeholder="e.g. 37.5 for 6 Ana"
                     value={normalizedOwnershipPct}
                     onChange={(e) => setNormalizedOwnershipPct(e.target.value)}
@@ -518,9 +515,7 @@ export const PropertyRegisterView: React.FC = () => {
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Market Valuation ({currentWorkspace?.currency || 'BDT'})
                   </label>
-                  <input
-                    type="number"
-                    step="1000"
+                  <NumericInput
                     placeholder="2500000"
                     value={marketValuation}
                     onChange={(e) => setMarketValuation(e.target.value)}
@@ -533,9 +528,7 @@ export const PropertyRegisterView: React.FC = () => {
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Recovery Amount Required (If Disputed/Shared)
                   </label>
-                  <input
-                    type="number"
-                    step="1000"
+                  <NumericInput
                     placeholder="0"
                     value={recoveryRequired}
                     onChange={(e) => setRecoveryRequired(e.target.value)}
@@ -630,10 +623,8 @@ export const PropertyRegisterView: React.FC = () => {
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Amount Recovered
                   </label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="1"
+                  <NumericInput
+                    placeholder="0.00"
                     value={recoveryAmount}
                     onChange={(e) => setRecoveryAmount(e.target.value)}
                     className="w-full px-3 py-2 text-xs font-mono font-semibold rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
@@ -763,11 +754,8 @@ export const PropertyRegisterView: React.FC = () => {
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Share % (e.g. 37.5)
                   </label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    max="100"
+                  <NumericInput
+                    placeholder="e.g. 37.5"
                     value={editNormalizedPct}
                     onChange={(e) => setEditNormalizedPct(e.target.value)}
                     className="w-full px-3 py-2 text-xs font-mono rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
@@ -778,9 +766,8 @@ export const PropertyRegisterView: React.FC = () => {
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     Market Valuation ({currentWorkspace?.currency || 'BDT'})
                   </label>
-                  <input
-                    type="number"
-                    step="1000"
+                  <NumericInput
+                    placeholder="2500000"
                     value={editValuation}
                     onChange={(e) => setEditValuation(e.target.value)}
                     className="w-full px-3 py-2 text-xs font-mono rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"

@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { supabase } from '../../lib/supabase';
 import { AuthUser } from '../../types';
+import { NumericInput } from '../common/NumericInput';
 
 interface AuthGateProps {
   onAuthenticated: (user: AuthUser) => void;
@@ -411,8 +412,8 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
                 <label className="block text-xs font-medium text-slate-300 mb-1">
                   6-Digit Confirmation Code / OTP Token
                 </label>
-                <input
-                  type="text"
+                <NumericInput
+                  allowDecimal={false}
                   value={otpToken}
                   onChange={(e) => setOtpToken(e.target.value)}
                   placeholder="e.g. 123456"

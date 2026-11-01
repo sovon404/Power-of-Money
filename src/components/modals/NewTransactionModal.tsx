@@ -4,6 +4,7 @@ import { useWorkspace } from '../../context/WorkspaceContext';
 import { db } from '../../services/db';
 import { JournalEntry, Category, FinancialAccount } from '../../types';
 import { EditableSelect } from '../common/EditableSelect';
+import { NumericInput } from '../common/NumericInput';
 import { toUuid } from '../../lib/uuid';
 
 interface NewTransactionModalProps {
@@ -446,13 +447,10 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
                 Amount ({currentWorkspace?.currency || 'BDT'})
               </label>
               <div className="relative">
-                <span className="absolute left-3 top-2.5 text-sm font-bold text-slate-400">
+                <span className="absolute left-3 top-2.5 text-sm font-bold text-slate-400 pointer-events-none">
                   ৳
                 </span>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0.01"
+                <NumericInput
                   placeholder="0.00"
                   value={amount}
                   onChange={(e) => setAmount(e.target.value)}
