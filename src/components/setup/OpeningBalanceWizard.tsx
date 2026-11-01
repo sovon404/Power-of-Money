@@ -53,7 +53,7 @@ export const OpeningBalanceWizard: React.FC = () => {
     db.seedCategoriesForWorkspace(workspaceId);
 
     // 2. Setup Accounts with opening balances
-    const accounts = db.getAccounts(workspaceId);
+    const accounts = db.ensureDefaultAccountsForWorkspace(workspaceId);
     let cashAcc = accounts.find(a => a.account_type_id === 'cash');
     let bkashAcc = accounts.find(a => a.provider === 'bKash');
     let nagadAcc = accounts.find(a => a.provider === 'Nagad');

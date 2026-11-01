@@ -17,6 +17,7 @@ interface WorkspaceContextType {
   formatMoney: (amount: number, currencyOverride?: string) => string;
   isInitialSetupDone: boolean;
   completeInitialSetup: () => void;
+  updateWorkspaceSettings: (settings: Partial<NonNullable<Workspace['settings']>>) => void;
 }
 
 const WorkspaceContext = createContext<WorkspaceContextType | undefined>(undefined);
@@ -110,7 +111,7 @@ export const WorkspaceProvider: React.FC<WorkspaceProviderProps> = ({ children, 
 
         if (!isMounted) return;
 
-        db.purgeLocalDemoData(active.id);
+        db.ensureDefaultAccountsForWorkspace(active.id);
         setWorkspaces(userWorkspaces);
         setCurrentWorkspace(active);
         localStorage.setItem(userActiveWsKey, active.id);
@@ -159,6 +160,7 @@ export const WorkspaceProvider: React.FC<WorkspaceProviderProps> = ({ children, 
     };
     db.saveWorkspace(newWs);
     db.seedCategoriesForWorkspace(newWs.id);
+    db.ensureDefaultAccountsForWorkspace(newWs.id);
     
     const updated = db.getWorkspaces(authUser.id);
     setWorkspaces(updated);
@@ -171,6 +173,21 @@ export const WorkspaceProvider: React.FC<WorkspaceProviderProps> = ({ children, 
     setIsInitialSetupDone(true);
     refreshData();
   };
+
+  const updateWorkspaceSettings = useCallback((newSettings: Partial<NonNullable<Workspace['settings']>>) => {
+    if (!currentWorkspace) return;
+    const updatedWs: Workspace = {
+      ...currentWorkspace,
+      settings: {
+        ...(currentWorkspace.settings || {}),
+        ...newSettings,
+      },
+    };
+    db.saveWorkspace(updatedWs);
+    setCurrentWorkspace(updatedWs);
+    setWorkspaces(prev => prev.map(w => w.id === updatedWs.id ? updatedWs : w));
+    refreshData();
+  }, [currentWorkspace, refreshData]);
 
   const canWrite = userRole === 'owner' || userRole === 'admin' || userRole === 'editor';
 
@@ -203,6 +220,7 @@ export const WorkspaceProvider: React.FC<WorkspaceProviderProps> = ({ children, 
         formatMoney,
         isInitialSetupDone,
         completeInitialSetup,
+        updateWorkspaceSettings,
       }}
     >
       {children}

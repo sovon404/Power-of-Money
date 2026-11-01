@@ -241,23 +241,70 @@ class DatabaseEngine {
     }
   }
 
-  // Purges any previously cached mock/dummy accounts so only real DB rows exist
-  purgeLocalDemoData(workspaceId: string): void {
-    const isMockAccount = (a: FinancialAccount) => {
-      return a.id.startsWith('acc_cash_') || 
-             a.id.startsWith('acc_bank_') || 
-             a.id.startsWith('acc_bkash_') || 
-             a.id.startsWith('acc_nagad_') || 
-             a.id.startsWith('acc_dspf_') || 
-             a.id.startsWith('acc_unity_') || 
-             a.id.startsWith('acc_card_due_');
-    };
-    const current = this.get<FinancialAccount[]>(STORAGE_KEYS.ACCOUNTS, []);
-    const filtered = current.filter(a => !(a.workspace_id === workspaceId && isMockAccount(a)));
-    this.set(STORAGE_KEYS.ACCOUNTS, filtered);
+  // Safe cleanup - retains all user heads and real accounts
+  purgeLocalDemoData(_workspaceId: string): void {
+    // No-op to preserve persistent accounts and heads
+  }
 
-    const cards = this.get<CreditCard[]>(STORAGE_KEYS.CREDIT_CARDS, []);
-    this.set(STORAGE_KEYS.CREDIT_CARDS, cards.filter(c => !(c.workspace_id === workspaceId && c.id.startsWith('card_city_'))));
+  // Ensures foundational accounts exist with deterministic RFC4122 v4 UUIDs
+  ensureDefaultAccountsForWorkspace(workspaceId: string): FinancialAccount[] {
+    const existing = this.getAccounts(workspaceId);
+    const existingUuids = new Set(existing.map(a => a.id));
+    const existingNames = new Set(existing.map(a => a.name.toLowerCase()));
+
+    const defaults: Array<{
+      defaultId: string;
+      name: string;
+      type: string;
+      provider: string;
+      icon: string;
+      color: string;
+    }> = [
+      { defaultId: `acc_cash_hand_${workspaceId}`, name: 'Cash In Hand', type: 'cash', provider: 'Cash', icon: 'banknote', color: '#10b981' },
+      { defaultId: `acc_bank_online_${workspaceId}`, name: 'Cash In Bank / Online', type: 'bank', provider: 'Bank', icon: 'landmark', color: '#0284c7' },
+      { defaultId: `acc_bkash_wallet_${workspaceId}`, name: 'bKash Wallet', type: 'mfs', provider: 'bKash', icon: 'smartphone', color: '#e11d48' },
+      { defaultId: `acc_nagad_wallet_${workspaceId}`, name: 'Nagad Wallet', type: 'mfs', provider: 'Nagad', icon: 'smartphone', color: '#ea580c' },
+      { defaultId: `acc_dspf_baf_${workspaceId}`, name: 'DSPF (BAF)', type: 'savings_dps', provider: 'BAF / DSPF', icon: 'piggy-bank', color: '#0d9488' },
+      { defaultId: `acc_unity_fund_${workspaceId}`, name: 'Unity Fund-2026', type: 'savings_dps', provider: 'Unity Fund', icon: 'flag', color: '#eab308' },
+      { defaultId: `acc_los_fund_${workspaceId}`, name: 'LOS Fund', type: 'savings_dps', provider: 'LOS Fund', icon: 'layers', color: '#9333ea' },
+      { defaultId: `acc_equity_offset_${workspaceId}`, name: 'Opening Balance Equity', type: 'opening_equity', provider: 'Equity', icon: 'scale', color: '#64748b' },
+    ];
+
+    let updated = false;
+    const allAccounts = this.get<FinancialAccount[]>(STORAGE_KEYS.ACCOUNTS, []);
+
+    for (const d of defaults) {
+      const uuid = toUuid(d.defaultId);
+      const nameMatch = existingNames.has(d.name.toLowerCase());
+      const idMatch = existingUuids.has(uuid);
+
+      if (!nameMatch && !idMatch) {
+        const newAcc: FinancialAccount = {
+          id: uuid,
+          workspace_id: workspaceId,
+          name: d.name,
+          account_type_id: d.type,
+          provider: d.provider,
+          currency: 'BDT',
+          opening_balance: 0,
+          opening_date: new Date().toISOString().split('T')[0],
+          current_balance_cached: 0,
+          is_archived: false,
+          icon: d.icon,
+          color: d.color,
+          created_at: new Date().toISOString(),
+        };
+        allAccounts.push(newAcc);
+        supabaseSync.syncAccount(newAcc, workspaceId);
+        updated = true;
+      }
+    }
+
+    if (updated) {
+      this.set(STORAGE_KEYS.ACCOUNTS, allAccounts);
+    }
+
+    return this.getAccounts(workspaceId);
   }
 
   // Financial Accounts

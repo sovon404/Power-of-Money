@@ -203,6 +203,16 @@ export default function App() {
   useEffect(() => {
     // Check real Supabase session status
     supabase.auth.getSession().then(({ data: { session }, error }) => {
+      try {
+        const saved = localStorage.getItem('pom_auth_session');
+        const parsed = saved ? JSON.parse(saved) : null;
+        if (parsed && parsed.id && parsed.id.startsWith('00000000')) {
+          return; // Retain active sandbox demo session
+        }
+      } catch {
+        // ignore parse error
+      }
+
       if (error || !session?.user || !session.user.email_confirmed_at) {
         if (!session?.user) {
           localStorage.removeItem('pom_auth_session');
@@ -221,6 +231,16 @@ export default function App() {
 
     // Real-time auth subscription
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      try {
+        const saved = localStorage.getItem('pom_auth_session');
+        const parsed = saved ? JSON.parse(saved) : null;
+        if (parsed && parsed.id && parsed.id.startsWith('00000000')) {
+          return;
+        }
+      } catch {
+        // ignore parse error
+      }
+
       if (event === 'SIGNED_OUT') {
         localStorage.removeItem('pom_auth_session');
         setAuthUser(null);

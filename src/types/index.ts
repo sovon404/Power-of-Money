@@ -9,6 +9,26 @@ export interface AuthUser {
   name: string;
 }
 
+export type DashboardWidgetId = 
+  | 'cockpit'
+  | 'kpi_metrics'
+  | 'cash_flow'
+  | 'recent_transactions'
+  | 'accounts_list'
+  | 'property_portfolio'
+  | 'savings_goals'
+  | 'budgets'
+  | 'credit_cards'
+  | 'loans_summary';
+
+export interface DashboardWidgetConfig {
+  id: DashboardWidgetId;
+  title: string;
+  description: string;
+  visible: boolean;
+  order: number;
+}
+
 export interface Workspace {
   id: string;
   name: string;
@@ -20,6 +40,8 @@ export interface Workspace {
     fiscal_year_start?: string;
     dateFormat?: string;
     enableAiReceipts?: boolean;
+    dashboardWidgets?: DashboardWidgetConfig[];
+    cockpitCustomLabels?: Record<string, string>;
   };
   created_at: string;
 }

@@ -312,6 +312,16 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
     }
   };
 
+  // Instant Sandbox Demo Access
+  const handleDemoAccess = () => {
+    const demoUser: AuthUser = {
+      id: '00000000-0000-4000-a000-000000000001',
+      email: 'demo@powerofmoney.app',
+      name: 'Sovon (Demo Vault)',
+    };
+    onAuthenticated(demoUser);
+  };
+
   return (
     <div className="min-h-screen bg-slate-950 flex flex-col justify-center items-center p-4 sm:p-6 relative overflow-hidden font-sans">
       {/* Futuristic Background Glows */}
@@ -623,6 +633,18 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
             )}
           </form>
         )}
+
+        {/* Sandbox Demo Option for Immediate Exploration */}
+        <div className="mt-5 pt-4 border-t border-slate-800/80">
+          <button
+            type="button"
+            onClick={handleDemoAccess}
+            className="w-full py-2.5 px-4 rounded-xl bg-slate-800/60 hover:bg-slate-800 active:bg-slate-700 text-slate-200 hover:text-white font-medium text-xs flex items-center justify-center gap-2 border border-slate-700/60 transition-all cursor-pointer"
+          >
+            <ShieldCheck className="w-4 h-4 text-emerald-400" />
+            <span>Explore Demo Vault (Instant Sandbox)</span>
+          </button>
+        </div>
       </div>
 
       {/* Security Footer Info */}
