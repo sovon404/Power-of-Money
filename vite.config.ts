@@ -11,6 +11,9 @@ export default defineConfig(() => {
         '@': path.resolve('.'),
       },
     },
+    build: {
+      chunkSizeWarningLimit: 2000,
+    },
     server: {
       hmr: false,
       watch: null,
