@@ -11,6 +11,7 @@ import {
   ShieldCheck,
   Plus
 } from 'lucide-react';
+import { motion } from 'motion/react';
 import { useWorkspace } from '../../context/WorkspaceContext';
 import { db } from '../../services/db';
 import { NavItemKey } from '../layout/Sidebar';
@@ -108,76 +109,88 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({
       {/* Top Welcome & KPI Metric Row */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         {/* Net Worth Card */}
-        <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs">
+        <motion.div 
+          whileHover={{ y: -4, transition: { duration: 0.2 } }}
+          className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-emerald-500/20 dark:border-emerald-500/20 shadow-sm hover:shadow-md hover:shadow-emerald-500/5 transition-all"
+        >
           <div className="flex items-center justify-between mb-2">
             <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">
               Net Worth (Equity)
             </span>
-            <div className="w-7 h-7 rounded-lg bg-emerald-50 dark:bg-emerald-950/60 text-emerald-600 dark:text-emerald-400 flex items-center justify-center">
+            <div className="w-8 h-8 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center font-bold">
               <ShieldCheck className="w-4 h-4" />
             </div>
           </div>
-          <div className="text-2xl font-bold font-mono tracking-tight text-slate-900 dark:text-white tabular-nums">
+          <div className="text-2xl font-extrabold font-mono tracking-tight text-slate-900 dark:text-white tabular-nums">
             {formatMoney(netWorth)}
           </div>
           <div className="mt-2 text-2xs text-slate-500 dark:text-slate-400">
             Assets: <span className="font-mono font-medium text-emerald-600 dark:text-emerald-400">{formatMoney(totalAssets)}</span> · Liab: <span className="font-mono font-medium text-rose-600 dark:text-rose-400">{formatMoney(totalLiabilities)}</span>
           </div>
-        </div>
+        </motion.div>
 
         {/* Liquid Cash & Bank */}
-        <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs">
+        <motion.div 
+          whileHover={{ y: -4, transition: { duration: 0.2 } }}
+          className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-blue-500/20 dark:border-blue-500/20 shadow-sm hover:shadow-md hover:shadow-blue-500/5 transition-all"
+        >
           <div className="flex items-center justify-between mb-2">
             <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">
               Liquid Cash &amp; MFS
             </span>
-            <div className="w-7 h-7 rounded-lg bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 flex items-center justify-center">
+            <div className="w-8 h-8 rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400 flex items-center justify-center font-bold">
               <Wallet className="w-4 h-4" />
             </div>
           </div>
-          <div className="text-2xl font-bold font-mono tracking-tight text-slate-900 dark:text-white tabular-nums">
+          <div className="text-2xl font-extrabold font-mono tracking-tight text-slate-900 dark:text-white tabular-nums">
             {formatMoney(liquidAssets)}
           </div>
           <div className="mt-2 text-2xs text-slate-500 dark:text-slate-400">
-            Cash, bKash, Nagad, and Checking accounts
+            Cash, bKash, Nagad, and Checking
           </div>
-        </div>
+        </motion.div>
 
         {/* Total Debt & Liabilities */}
-        <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs">
+        <motion.div 
+          whileHover={{ y: -4, transition: { duration: 0.2 } }}
+          className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-rose-500/20 dark:border-rose-500/20 shadow-sm hover:shadow-md hover:shadow-rose-500/5 transition-all"
+        >
           <div className="flex items-center justify-between mb-2">
             <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">
               Total Liabilities
             </span>
-            <div className="w-7 h-7 rounded-lg bg-rose-50 dark:bg-rose-950/60 text-rose-600 dark:text-rose-400 flex items-center justify-center">
+            <div className="w-8 h-8 rounded-xl bg-rose-500/10 text-rose-600 dark:text-rose-400 flex items-center justify-center font-bold">
               <CreditCard className="w-4 h-4" />
             </div>
           </div>
-          <div className="text-2xl font-bold font-mono tracking-tight text-rose-600 dark:text-rose-400 tabular-nums">
+          <div className="text-2xl font-extrabold font-mono tracking-tight text-rose-600 dark:text-rose-400 tabular-nums">
             {formatMoney(totalLiabilities)}
           </div>
           <div className="mt-2 text-2xs text-slate-500 dark:text-slate-400">
             Card Dues: <span className="font-mono">{formatMoney(cardLiabilities)}</span> · Loans: <span className="font-mono">{formatMoney(borrowedLoans)}</span>
           </div>
-        </div>
+        </motion.div>
 
         {/* Money Lent (Receivables) */}
-        <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs">
+        <motion.div 
+          whileHover={{ y: -4, transition: { duration: 0.2 } }}
+          className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-amber-500/20 dark:border-amber-500/20 shadow-sm hover:shadow-md hover:shadow-amber-500/5 transition-all"
+        >
           <div className="flex items-center justify-between mb-2">
             <span className="text-xs font-semibold text-slate-500 dark:text-slate-400">
               Money Lent (Receivables)
             </span>
-            <div className="w-7 h-7 rounded-lg bg-amber-50 dark:bg-amber-950/60 text-amber-600 dark:text-amber-400 flex items-center justify-center">
+            <div className="w-8 h-8 rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400 flex items-center justify-center font-bold">
               <HandCoins className="w-4 h-4" />
             </div>
           </div>
-          <div className="text-2xl font-bold font-mono tracking-tight text-slate-900 dark:text-white tabular-nums">
+          <div className="text-2xl font-extrabold font-mono tracking-tight text-slate-900 dark:text-white tabular-nums">
             {formatMoney(moneyLent)}
           </div>
           <div className="mt-2 text-2xs text-slate-500 dark:text-slate-400">
             To be collected from borrowers
           </div>
-        </div>
+        </motion.div>
       </div>
 
       {/* Monthly Cash Flow & Quick Accounts Section */}

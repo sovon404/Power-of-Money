@@ -8,6 +8,9 @@ interface WorkspaceContextType {
   workspaces: Workspace[];
   userRole: WorkspaceRole;
   canWrite: boolean;
+  isSyncingWithDb: boolean;
+  lastDbSyncTime: string | null;
+  syncFromDatabase: () => Promise<void>;
   switchWorkspace: (workspaceId: string) => void;
   createFamilyWorkspace: (name: string, description?: string) => Workspace;
   refreshData: () => void;
@@ -28,6 +31,8 @@ export const WorkspaceProvider: React.FC<WorkspaceProviderProps> = ({ children, 
   const [currentWorkspace, setCurrentWorkspace] = useState<Workspace | null>(null);
   const [userRole, setUserRole] = useState<WorkspaceRole>('owner');
   const [refreshKey, setRefreshKey] = useState(0);
+  const [isSyncingWithDb, setIsSyncingWithDb] = useState(false);
+  const [lastDbSyncTime, setLastDbSyncTime] = useState<string | null>(null);
 
   // Initial setup check scoped to user
   const setupKey = `pom_setup_completed_${authUser.id}`;
@@ -38,6 +43,24 @@ export const WorkspaceProvider: React.FC<WorkspaceProviderProps> = ({ children, 
   const refreshData = useCallback(() => {
     setRefreshKey(prev => prev + 1);
   }, []);
+
+  const syncFromDatabase = useCallback(async () => {
+    if (!currentWorkspace) return;
+    setIsSyncingWithDb(true);
+    try {
+      const { supabaseSync } = await import('../services/supabaseSync');
+      const remote = await supabaseSync.pullRemoteWorkspaceData(currentWorkspace.id);
+      if (remote) {
+        db.hydrateFromSupabase(remote, currentWorkspace.id);
+      }
+      setLastDbSyncTime(new Date().toLocaleTimeString());
+      setRefreshKey(prev => prev + 1);
+    } catch (err) {
+      console.warn('Sync from database notice:', err);
+    } finally {
+      setIsSyncingWithDb(false);
+    }
+  }, [currentWorkspace]);
 
   useEffect(() => {
     // Initialize or load workspace specifically bound to authUser.id
@@ -50,11 +73,26 @@ export const WorkspaceProvider: React.FC<WorkspaceProviderProps> = ({ children, 
     const savedActiveId = localStorage.getItem(userActiveWsKey);
     const active = all.find(w => w.id === savedActiveId) || workspace;
     
-    db.ensureUserCockpitAccounts(active.id);
+    // Purge any residual mock/dummy accounts so only real DB information is used
+    db.purgeLocalDemoData(active.id);
     setCurrentWorkspace(active);
     localStorage.setItem(userActiveWsKey, active.id);
     setIsInitialSetupDone(localStorage.getItem(setupKey) === 'true');
-  }, [authUser.id, authUser.name, authUser.email, refreshKey, setupKey]);
+
+    // Trigger immediate background sync with live Supabase database
+    import('../services/supabaseSync').then(({ supabaseSync }) => {
+      setIsSyncingWithDb(true);
+      supabaseSync.pullRemoteWorkspaceData(active.id).then(remote => {
+        if (remote) {
+          db.hydrateFromSupabase(remote, active.id);
+          setLastDbSyncTime(new Date().toLocaleTimeString());
+          setRefreshKey(prev => prev + 1);
+        }
+      }).finally(() => {
+        setIsSyncingWithDb(false);
+      });
+    });
+  }, [authUser.id, authUser.name, authUser.email, setupKey]);
 
   const switchWorkspace = (workspaceId: string) => {
     const found = workspaces.find(w => w.id === workspaceId);
@@ -78,7 +116,6 @@ export const WorkspaceProvider: React.FC<WorkspaceProviderProps> = ({ children, 
     };
     db.saveWorkspace(newWs);
     db.seedCategoriesForWorkspace(newWs.id);
-    db.seedDefaultAccounts(newWs.id);
     
     const updated = db.getWorkspaces(authUser.id);
     setWorkspaces(updated);
@@ -114,6 +151,9 @@ export const WorkspaceProvider: React.FC<WorkspaceProviderProps> = ({ children, 
         workspaces,
         userRole,
         canWrite,
+        isSyncingWithDb,
+        lastDbSyncTime,
+        syncFromDatabase,
         switchWorkspace,
         createFamilyWorkspace,
         refreshData,

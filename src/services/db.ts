@@ -17,6 +17,8 @@ import {
   AuditLog 
 } from '../types';
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
+import { supabaseSync } from './supabaseSync';
+import { toUuid, generateUuid } from '../lib/uuid';
 
 const STORAGE_KEYS = {
   CURRENT_USER: 'pom_current_user',
@@ -129,10 +131,14 @@ class DatabaseEngine {
 
   // Initialize workspace bound strictly to authenticated user's ID
   initializeUserWorkspace(userId: string, userName?: string, userEmail?: string): { workspace: Workspace; isNew: boolean } {
+    const wsUuid = toUuid(`ws_${userId}`);
     let workspaces = this.getWorkspaces(userId);
+    let activeWs: Workspace;
+    let isNew = false;
+
     if (workspaces.length === 0) {
-      const personalWs: Workspace = {
-        id: `ws_${userId}`,
+      activeWs = {
+        id: wsUuid,
         name: `${userName || 'My'}'s Vault`,
         type: 'personal',
         created_by: userId,
@@ -140,24 +146,18 @@ class DatabaseEngine {
         description: `Primary personal financial vault for ${userEmail || userName || userId}`,
         created_at: new Date().toISOString(),
       };
-      this.saveWorkspace(personalWs);
-
-      // Seed categories for this user's workspace
-      this.seedCategoriesForWorkspace(personalWs.id);
-
-      // Seed default accounts for this user's workspace
-      this.seedDefaultAccounts(personalWs.id);
-
-      // Cloud sync to Supabase
-      this.syncProfileAndWorkspaceToSupabase(userId, userName, userEmail, personalWs);
-
-      return { workspace: personalWs, isNew: true };
+      this.saveWorkspace(activeWs);
+      this.seedCategoriesForWorkspace(activeWs.id);
+      isNew = true;
+    } else {
+      activeWs = workspaces[0];
     }
 
-    const active = workspaces[0];
-    this.ensureUserCockpitAccounts(active.id);
-    this.syncProfileAndWorkspaceToSupabase(userId, userName, userEmail, active);
-    return { workspace: active, isNew: false };
+    // Direct cloud sync to Supabase (profiles, workspaces)
+    supabaseSync.syncProfile(userId, userEmail || '', userName || '');
+    supabaseSync.syncWorkspace(activeWs, userId);
+
+    return { workspace: activeWs, isNew };
   }
 
   // Fallback for backward compatibility
@@ -165,61 +165,11 @@ class DatabaseEngine {
     return this.initializeUserWorkspace(userId || 'user_owner', userName);
   }
 
-  // Cloud sync to Supabase profiles & workspaces tables
-  private async syncProfileAndWorkspaceToSupabase(
-    userId: string, 
-    userName?: string, 
-    userEmail?: string,
-    ws?: Workspace
-  ) {
-    if (!isSupabaseConfigured() || !userId || userId === 'user_owner') return;
-
-    try {
-      // 1. Sync Profile
-      await supabase.from('profiles').upsert({
-        id: userId,
-        email: userEmail || '',
-        full_name: userName || '',
-        default_currency: 'BDT',
-        updated_at: new Date().toISOString(),
-      });
-
-      // 2. Sync Workspace if valid UUID format
-      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId);
-      if (isUuid && ws) {
-        const { data: remoteWorkspaces } = await supabase
-          .from('workspaces')
-          .select('id, name')
-          .eq('created_by', userId);
-
-        if (!remoteWorkspaces || remoteWorkspaces.length === 0) {
-          const { data: createdWs } = await supabase.from('workspaces').insert({
-            name: ws.name,
-            type: ws.type,
-            created_by: userId,
-            currency: ws.currency,
-            description: ws.description,
-          }).select().single();
-
-          if (createdWs) {
-            await supabase.from('workspace_members').insert({
-              workspace_id: createdWs.id,
-              user_id: userId,
-              role: 'owner',
-            });
-          }
-        }
-      }
-    } catch (err) {
-      console.warn('Supabase profile/workspace sync notice:', err);
-    }
-  }
-
   seedCategoriesForWorkspace(workspaceId: string): void {
     const existing = this.getCategories(workspaceId);
     if (existing.length === 0) {
       const newCats: Category[] = SEED_CATEGORIES_DATA.map((c, i) => ({
-        id: `cat_${workspaceId}_${i + 1}`,
+        id: toUuid(`cat_${workspaceId}_${i + 1}`),
         workspace_id: workspaceId,
         name: c.name,
         type: c.type,
@@ -232,326 +182,82 @@ class DatabaseEngine {
       }));
       const allCats = this.get<Category[]>(STORAGE_KEYS.CATEGORIES, []);
       this.set(STORAGE_KEYS.CATEGORIES, [...allCats, ...newCats]);
+      newCats.forEach(cat => supabaseSync.syncCategory(cat, workspaceId));
     }
   }
 
-  seedDefaultAccounts(workspaceId: string): void {
-    const existing = this.getAccounts(workspaceId);
-    if (existing.length === 0) {
-      const initialAccounts: FinancialAccount[] = [
-        {
-          id: `acc_cash_${workspaceId}`,
-          workspace_id: workspaceId,
-          name: 'Cash in Hand',
-          account_type_id: 'cash',
-          provider: 'Cash',
-          currency: 'BDT',
-          opening_balance: 198,
-          opening_date: '2026-06-01',
-          current_balance_cached: 198,
-          is_archived: false,
-          icon: 'banknote',
-          color: '#10b981',
-          created_at: new Date().toISOString(),
-        },
-        {
-          id: `acc_bank_${workspaceId}`,
-          workspace_id: workspaceId,
-          name: 'Cash In Bank/Online',
-          account_type_id: 'bank',
-          provider: 'BRAC / Online Banking',
-          account_number_masked: '•••• 4108',
-          currency: 'BDT',
-          opening_balance: 12215,
-          opening_date: '2026-06-01',
-          current_balance_cached: 12215,
-          is_archived: false,
-          icon: 'landmark',
-          color: '#0284c7',
-          created_at: new Date().toISOString(),
-        },
-        {
-          id: `acc_bkash_${workspaceId}`,
-          workspace_id: workspaceId,
-          name: 'bKash',
-          account_type_id: 'mfs',
-          provider: 'bKash',
-          account_number_masked: '•••• 7597',
-          currency: 'BDT',
-          opening_balance: 2490,
-          opening_date: '2026-06-01',
-          current_balance_cached: 2490,
-          is_archived: false,
-          icon: 'smartphone',
-          color: '#e11d48',
-          created_at: new Date().toISOString(),
-        },
-        {
-          id: `acc_nagad_${workspaceId}`,
-          workspace_id: workspaceId,
-          name: 'Nagad',
-          account_type_id: 'mfs',
-          provider: 'Nagad',
-          account_number_masked: '•••• 3791',
-          currency: 'BDT',
-          opening_balance: 10,
-          opening_date: '2026-06-01',
-          current_balance_cached: 10,
-          is_archived: false,
-          icon: 'smartphone',
-          color: '#f97316',
-          created_at: new Date().toISOString(),
-        },
-        {
-          id: `acc_dspf_${workspaceId}`,
-          workspace_id: workspaceId,
-          name: 'DSPF BAF',
-          account_type_id: 'savings_dps',
-          provider: 'BAF Provident Fund',
-          account_number_masked: '•••• 8821',
-          currency: 'BDT',
-          opening_balance: 111541.73,
-          opening_date: '2026-06-01',
-          current_balance_cached: 111541.73,
-          is_archived: false,
-          icon: 'shield',
-          color: '#3b82f6',
-          created_at: new Date().toISOString(),
-        },
-        {
-          id: `acc_unity_${workspaceId}`,
-          workspace_id: workspaceId,
-          name: 'Unity Fund-2026',
-          account_type_id: 'savings_dps',
-          provider: 'Unity Special Allocation',
-          currency: 'BDT',
-          opening_balance: 20000,
-          opening_date: '2026-06-01',
-          current_balance_cached: 20000,
-          is_archived: false,
-          icon: 'flag',
-          color: '#eab308',
-          created_at: new Date().toISOString(),
-        },
-        {
-          id: `acc_los_${workspaceId}`,
-          workspace_id: workspaceId,
-          name: 'LOS Fund',
-          account_type_id: 'savings_dps',
-          provider: 'LOS Reserve',
-          currency: 'BDT',
-          opening_balance: 0,
-          opening_date: '2026-06-01',
-          current_balance_cached: 0,
-          is_archived: false,
-          icon: 'lock',
-          color: '#8b5cf6',
-          created_at: new Date().toISOString(),
-        },
-        {
-          id: `acc_card_due_${workspaceId}`,
-          workspace_id: workspaceId,
-          name: 'Credit Card Due',
-          account_type_id: 'credit_card',
-          provider: 'City Bank Visa',
-          account_number_masked: '•••• 2049',
-          currency: 'BDT',
-          opening_balance: 37497.49,
-          opening_date: '2026-06-01',
-          current_balance_cached: 37497.49,
-          is_archived: false,
-          icon: 'credit-card',
-          color: '#f43f5e',
-          created_at: new Date().toISOString(),
-        },
-        {
-          id: `acc_equity_${workspaceId}`,
-          workspace_id: workspaceId,
-          name: 'Opening Balance Equity',
-          account_type_id: 'opening_equity',
-          provider: 'System',
-          currency: 'BDT',
-          opening_balance: 0,
-          opening_date: '2026-06-01',
-          current_balance_cached: 0,
-          is_archived: false,
-          icon: 'scale',
-          color: '#64748b',
-          created_at: new Date().toISOString(),
-        },
-      ];
-      const allAccs = this.get<FinancialAccount[]>(STORAGE_KEYS.ACCOUNTS, []);
-      this.set(STORAGE_KEYS.ACCOUNTS, [...allAccs, ...initialAccounts]);
-
-      // Also create credit card entity for Credit Card Due
-      const cardId = `card_city_${workspaceId}`;
-      const defaultCard: CreditCard = {
-        id: cardId,
-        workspace_id: workspaceId,
-        account_id: `acc_card_due_${workspaceId}`,
-        card_name: 'City Bank Visa Platinum',
-        issuing_bank: 'City Bank',
-        card_network: 'Visa',
-        last_four_digits: '2049',
-        statement_day: 15,
-        payment_due_day: 5,
-        credit_limit: 150000,
-        interest_rate_apr: 20.0,
-        annual_fee: 2500,
-        status: 'active',
-        created_at: new Date().toISOString(),
-      };
-      const allCards = this.get<CreditCard[]>(STORAGE_KEYS.CREDIT_CARDS, []);
-      if (!allCards.find(c => c.workspace_id === workspaceId)) {
-        this.set(STORAGE_KEYS.CREDIT_CARDS, [...allCards, defaultCard]);
+  // Hydrates local storage cache with pure live data from Supabase DB (no dummy data)
+  hydrateFromSupabase(data: {
+    accounts?: FinancialAccount[];
+    categories?: Category[];
+    cards?: CreditCard[];
+    loans?: Loan[];
+    properties?: Property[];
+    entries?: JournalEntry[];
+    budgets?: Budget[];
+    goals?: SavingsGoal[];
+  }, workspaceId: string): void {
+    if (data.accounts !== undefined) {
+      const otherAccs = this.get<FinancialAccount[]>(STORAGE_KEYS.ACCOUNTS, []).filter(a => a.workspace_id !== workspaceId);
+      this.set(STORAGE_KEYS.ACCOUNTS, [...otherAccs, ...data.accounts]);
+    }
+    if (data.categories !== undefined && data.categories.length > 0) {
+      const otherCats = this.get<Category[]>(STORAGE_KEYS.CATEGORIES, []).filter(c => c.workspace_id !== workspaceId);
+      this.set(STORAGE_KEYS.CATEGORIES, [...otherCats, ...data.categories]);
+    }
+    if (data.cards !== undefined) {
+      const otherCards = this.get<CreditCard[]>(STORAGE_KEYS.CREDIT_CARDS, []).filter(c => c.workspace_id !== workspaceId);
+      this.set(STORAGE_KEYS.CREDIT_CARDS, [...otherCards, ...data.cards]);
+    }
+    if (data.loans !== undefined) {
+      const otherLoans = this.get<Loan[]>(STORAGE_KEYS.LOANS, []).filter(l => l.workspace_id !== workspaceId);
+      this.set(STORAGE_KEYS.LOANS, [...otherLoans, ...data.loans]);
+    }
+    if (data.properties !== undefined) {
+      const otherProps = this.get<Property[]>(STORAGE_KEYS.PROPERTIES, []).filter(p => p.workspace_id !== workspaceId);
+      this.set(STORAGE_KEYS.PROPERTIES, [...otherProps, ...data.properties]);
+    }
+    if (data.budgets !== undefined) {
+      const otherBudgets = this.get<Budget[]>(STORAGE_KEYS.BUDGETS, []).filter(b => b.workspace_id !== workspaceId);
+      this.set(STORAGE_KEYS.BUDGETS, [...otherBudgets, ...data.budgets]);
+    }
+    if (data.goals !== undefined) {
+      const otherGoals = this.get<SavingsGoal[]>(STORAGE_KEYS.SAVINGS_GOALS, []).filter(g => g.workspace_id !== workspaceId);
+      this.set(STORAGE_KEYS.SAVINGS_GOALS, [...otherGoals, ...data.goals]);
+    }
+    if (data.entries !== undefined) {
+      const otherEntries = this.get<JournalEntry[]>(STORAGE_KEYS.JOURNAL_ENTRIES, []).filter(e => e.workspace_id !== workspaceId);
+      const otherLines = this.get<JournalLine[]>(STORAGE_KEYS.JOURNAL_LINES, []).filter(l => l.workspace_id !== workspaceId);
+      const newLines: JournalLine[] = [];
+      data.entries.forEach(e => {
+        if ((e as any).lines && Array.isArray((e as any).lines)) {
+          newLines.push(...(e as any).lines);
+        }
+      });
+      this.set(STORAGE_KEYS.JOURNAL_ENTRIES, [...otherEntries, ...data.entries]);
+      if (newLines.length > 0) {
+        this.set(STORAGE_KEYS.JOURNAL_LINES, [...otherLines, ...newLines]);
       }
     }
   }
 
-  ensureUserCockpitAccounts(workspaceId: string): void {
-    const existing = this.getAccounts(workspaceId);
-    const existingNames = new Set(existing.map(a => a.name.toLowerCase()));
-    const allAccs = this.get<FinancialAccount[]>(STORAGE_KEYS.ACCOUNTS, []);
-    let modified = false;
+  // Purges any previously cached mock/dummy accounts so only real DB rows exist
+  purgeLocalDemoData(workspaceId: string): void {
+    const isMockAccount = (a: FinancialAccount) => {
+      return a.id.startsWith('acc_cash_') || 
+             a.id.startsWith('acc_bank_') || 
+             a.id.startsWith('acc_bkash_') || 
+             a.id.startsWith('acc_nagad_') || 
+             a.id.startsWith('acc_dspf_') || 
+             a.id.startsWith('acc_unity_') || 
+             a.id.startsWith('acc_card_due_');
+    };
+    const current = this.get<FinancialAccount[]>(STORAGE_KEYS.ACCOUNTS, []);
+    const filtered = current.filter(a => !(a.workspace_id === workspaceId && isMockAccount(a)));
+    this.set(STORAGE_KEYS.ACCOUNTS, filtered);
 
-    const needed: FinancialAccount[] = [
-      {
-        id: `acc_cash_${workspaceId}`,
-        workspace_id: workspaceId,
-        name: 'Cash in Hand',
-        account_type_id: 'cash',
-        provider: 'Cash',
-        currency: 'BDT',
-        opening_balance: 198,
-        opening_date: '2026-06-01',
-        current_balance_cached: 198,
-        is_archived: false,
-        icon: 'banknote',
-        color: '#10b981',
-        created_at: new Date().toISOString(),
-      },
-      {
-        id: `acc_bank_${workspaceId}`,
-        workspace_id: workspaceId,
-        name: 'Cash In Bank/Online',
-        account_type_id: 'bank',
-        provider: 'BRAC / Online Banking',
-        account_number_masked: '•••• 4108',
-        currency: 'BDT',
-        opening_balance: 12215,
-        opening_date: '2026-06-01',
-        current_balance_cached: 12215,
-        is_archived: false,
-        icon: 'landmark',
-        color: '#0284c7',
-        created_at: new Date().toISOString(),
-      },
-      {
-        id: `acc_bkash_${workspaceId}`,
-        workspace_id: workspaceId,
-        name: 'bKash',
-        account_type_id: 'mfs',
-        provider: 'bKash',
-        account_number_masked: '•••• 7597',
-        currency: 'BDT',
-        opening_balance: 2490,
-        opening_date: '2026-06-01',
-        current_balance_cached: 2490,
-        is_archived: false,
-        icon: 'smartphone',
-        color: '#e11d48',
-        created_at: new Date().toISOString(),
-      },
-      {
-        id: `acc_nagad_${workspaceId}`,
-        workspace_id: workspaceId,
-        name: 'Nagad',
-        account_type_id: 'mfs',
-        provider: 'Nagad',
-        account_number_masked: '•••• 3791',
-        currency: 'BDT',
-        opening_balance: 10,
-        opening_date: '2026-06-01',
-        current_balance_cached: 10,
-        is_archived: false,
-        icon: 'smartphone',
-        color: '#f97316',
-        created_at: new Date().toISOString(),
-      },
-      {
-        id: `acc_dspf_${workspaceId}`,
-        workspace_id: workspaceId,
-        name: 'DSPF BAF',
-        account_type_id: 'savings_dps',
-        provider: 'BAF Provident Fund',
-        account_number_masked: '•••• 8821',
-        currency: 'BDT',
-        opening_balance: 111541.73,
-        opening_date: '2026-06-01',
-        current_balance_cached: 111541.73,
-        is_archived: false,
-        icon: 'shield',
-        color: '#3b82f6',
-        created_at: new Date().toISOString(),
-      },
-      {
-        id: `acc_unity_${workspaceId}`,
-        workspace_id: workspaceId,
-        name: 'Unity Fund-2026',
-        account_type_id: 'savings_dps',
-        provider: 'Unity Special Allocation',
-        currency: 'BDT',
-        opening_balance: 20000,
-        opening_date: '2026-06-01',
-        current_balance_cached: 20000,
-        is_archived: false,
-        icon: 'flag',
-        color: '#eab308',
-        created_at: new Date().toISOString(),
-      },
-      {
-        id: `acc_los_${workspaceId}`,
-        workspace_id: workspaceId,
-        name: 'LOS Fund',
-        account_type_id: 'savings_dps',
-        provider: 'LOS Reserve',
-        currency: 'BDT',
-        opening_balance: 0,
-        opening_date: '2026-06-01',
-        current_balance_cached: 0,
-        is_archived: false,
-        icon: 'lock',
-        color: '#8b5cf6',
-        created_at: new Date().toISOString(),
-      },
-      {
-        id: `acc_card_due_${workspaceId}`,
-        workspace_id: workspaceId,
-        name: 'Credit Card Due',
-        account_type_id: 'credit_card',
-        provider: 'City Bank Visa',
-        account_number_masked: '•••• 2049',
-        currency: 'BDT',
-        opening_balance: 37497.49,
-        opening_date: '2026-06-01',
-        current_balance_cached: 37497.49,
-        is_archived: false,
-        icon: 'credit-card',
-        color: '#f43f5e',
-        created_at: new Date().toISOString(),
-      },
-    ];
-
-    needed.forEach(n => {
-      if (!existingNames.has(n.name.toLowerCase())) {
-        allAccs.push(n);
-        modified = true;
-      }
-    });
-
-    if (modified) {
-      this.set(STORAGE_KEYS.ACCOUNTS, allAccs);
-    }
+    const cards = this.get<CreditCard[]>(STORAGE_KEYS.CREDIT_CARDS, []);
+    this.set(STORAGE_KEYS.CREDIT_CARDS, cards.filter(c => !(c.workspace_id === workspaceId && c.id.startsWith('card_city_'))));
   }
 
   // Financial Accounts
@@ -569,6 +275,7 @@ class DatabaseEngine {
       list.push(account);
     }
     this.set(STORAGE_KEYS.ACCOUNTS, list);
+    supabaseSync.syncAccount(account, account.workspace_id);
   }
 
   // Journal Entries & Lines
@@ -626,7 +333,7 @@ class DatabaseEngine {
       return { success: false, error: 'Amounts must be strictly greater than zero.' };
     }
 
-    const entryId = 'je_' + Date.now() + '_' + Math.random().toString(36).substr(2, 4);
+    const entryId = generateUuid();
     const currentEntries = this.get<JournalEntry[]>(STORAGE_KEYS.JOURNAL_ENTRIES, []);
     const currentLines = this.get<JournalLine[]>(STORAGE_KEYS.JOURNAL_LINES, []);
     const accounts = this.get<FinancialAccount[]>(STORAGE_KEYS.ACCOUNTS, []);
@@ -646,7 +353,7 @@ class DatabaseEngine {
     };
 
     const newLines: JournalLine[] = params.lines.map((l, i) => ({
-      id: `jl_${entryId}_${i}`,
+      id: generateUuid(),
       journal_entry_id: entryId,
       workspace_id: workspaceId,
       account_id: l.account_id,
@@ -668,12 +375,16 @@ class DatabaseEngine {
         acc.current_balance_cached = isDebitNormal
           ? acc.current_balance_cached + change
           : acc.current_balance_cached - change;
+        supabaseSync.syncAccount(acc, workspaceId);
       }
     }
 
     this.set(STORAGE_KEYS.JOURNAL_ENTRIES, [newEntry, ...currentEntries]);
     this.set(STORAGE_KEYS.JOURNAL_LINES, [...currentLines, ...newLines]);
     this.set(STORAGE_KEYS.ACCOUNTS, accounts);
+
+    // Sync complete journal transaction to Supabase
+    supabaseSync.syncJournalEntry({ ...newEntry, lines: newLines }, workspaceId);
 
     this.logAudit(workspaceId, 'POST_JOURNAL_ENTRY', 'journal_entry', entryId, {
       memo: params.memo,
@@ -779,6 +490,7 @@ class DatabaseEngine {
       list.push(cat);
     }
     this.set(STORAGE_KEYS.CATEGORIES, list);
+    supabaseSync.syncCategory(cat, cat.workspace_id);
   }
 
   // Credit Cards
@@ -796,6 +508,7 @@ class DatabaseEngine {
       list.push(card);
     }
     this.set(STORAGE_KEYS.CREDIT_CARDS, list);
+    supabaseSync.syncCreditCard(card, card.workspace_id);
   }
 
   // Loans & Money Lent
@@ -813,6 +526,7 @@ class DatabaseEngine {
       list.push(loan);
     }
     this.set(STORAGE_KEYS.LOANS, list);
+    supabaseSync.syncLoan(loan, loan.workspace_id);
   }
 
   // Properties
@@ -830,6 +544,7 @@ class DatabaseEngine {
       list.push(prop);
     }
     this.set(STORAGE_KEYS.PROPERTIES, list);
+    supabaseSync.syncProperty(prop, prop.workspace_id);
   }
 
   // Budgets
@@ -847,6 +562,7 @@ class DatabaseEngine {
       list.push(budget);
     }
     this.set(STORAGE_KEYS.BUDGETS, list);
+    supabaseSync.syncBudget(budget, budget.workspace_id);
   }
 
   // Savings Goals & DPS
@@ -864,6 +580,7 @@ class DatabaseEngine {
       list.push(goal);
     }
     this.set(STORAGE_KEYS.SAVINGS_GOALS, list);
+    supabaseSync.syncSavingsGoal(goal, goal.workspace_id);
   }
 
   // Recurring Rules

@@ -31,7 +31,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenNewTransaction,
   onOpenAiScan,
 }) => {
-  const { currentWorkspace, canWrite } = useWorkspace();
+  const { currentWorkspace, canWrite, syncFromDatabase, isSyncingWithDb, lastDbSyncTime } = useWorkspace();
   const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
     return document.documentElement.classList.contains('dark');
   });
@@ -139,7 +139,7 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
 
           {/* Zone 2: Live Database & Supabase Health Status Indicator */}
-          <div className="hidden md:flex items-center">
+          <div className="hidden md:flex items-center gap-2">
             <button
               onClick={() => {
                 setShowDbDiagnostics(true);
@@ -160,6 +160,17 @@ export const Header: React.FC<HeaderProps> = ({
               <span className="font-bold">
                 {dbStatus.connected ? `Connected (${dbStatus.latency}ms)` : 'Connecting...'}
               </span>
+            </button>
+
+            {/* Direct Instant DB Re-sync Button */}
+            <button
+              onClick={() => syncFromDatabase()}
+              disabled={isSyncingWithDb}
+              title={lastDbSyncTime ? `Last synced with Supabase at ${lastDbSyncTime}. Click to fetch fresh DB rows.` : 'Sync with Supabase DB'}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-full border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 text-2xs font-semibold transition-all shadow-2xs"
+            >
+              <RefreshCw className={`w-3 h-3 text-emerald-500 ${isSyncingWithDb ? 'animate-spin' : ''}`} />
+              <span>{isSyncingWithDb ? 'Syncing...' : 'Sync DB'}</span>
             </button>
           </div>
 
