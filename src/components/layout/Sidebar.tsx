@@ -62,7 +62,8 @@ export const Sidebar: React.FC<SidebarProps> = ({
     workspaces, 
     switchWorkspace, 
     createFamilyWorkspace, 
-    userRole 
+    userRole,
+    currentUser
   } = useWorkspace();
 
   const [isWorkspaceMenuOpen, setIsWorkspaceMenuOpen] = useState(false);
@@ -217,13 +218,17 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {/* User Status Footer */}
         <div className="p-3 border-t border-slate-800 bg-slate-900/90 shrink-0">
           <div className="flex items-center justify-between text-xs px-2 py-1.5">
-            <div className="flex items-center gap-2">
-              <div className="w-6 h-6 rounded-full bg-slate-700 flex items-center justify-center text-xs font-bold text-slate-200">
-                S
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="w-7 h-7 rounded-full bg-emerald-700/60 border border-emerald-500/40 flex items-center justify-center text-xs font-bold text-white shrink-0">
+                {currentUser?.name?.charAt(0)?.toUpperCase() || 'U'}
               </div>
-              <div className="truncate">
-                <span className="block text-white font-medium truncate">Sovon</span>
-                <span className="block text-slate-400 text-2xs">Workspace {userRole}</span>
+              <div className="truncate min-w-0">
+                <span className="block text-white font-medium text-xs truncate" title={currentUser?.name}>
+                  {currentUser?.name || 'Vault Owner'}
+                </span>
+                <span className="block text-slate-400 text-2xs truncate font-mono" title={currentUser?.email}>
+                  {currentUser?.email || 'Authenticated'}
+                </span>
               </div>
             </div>
             <div className="flex items-center gap-2">

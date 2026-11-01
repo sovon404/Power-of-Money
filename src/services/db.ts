@@ -110,12 +110,14 @@ class DatabaseEngine {
   }
 
   // Workspaces
-  getWorkspaces(): Workspace[] {
-    return this.get<Workspace[]>(STORAGE_KEYS.WORKSPACES, []);
+  getWorkspaces(userId?: string): Workspace[] {
+    const all = this.get<Workspace[]>(STORAGE_KEYS.WORKSPACES, []);
+    if (!userId) return all;
+    return all.filter(w => w.created_by === userId);
   }
 
   saveWorkspace(ws: Workspace): void {
-    const list = this.getWorkspaces();
+    const list = this.get<Workspace[]>(STORAGE_KEYS.WORKSPACES, []);
     const idx = list.findIndex(w => w.id === ws.id);
     if (idx >= 0) {
       list[idx] = ws;
@@ -125,30 +127,92 @@ class DatabaseEngine {
     this.set(STORAGE_KEYS.WORKSPACES, list);
   }
 
-  // Seed default workspace if empty
-  initializeDefaultWorkspace(): { workspace: Workspace; isNew: boolean } {
-    let workspaces = this.getWorkspaces();
+  // Initialize workspace bound strictly to authenticated user's ID
+  initializeUserWorkspace(userId: string, userName?: string, userEmail?: string): { workspace: Workspace; isNew: boolean } {
+    let workspaces = this.getWorkspaces(userId);
     if (workspaces.length === 0) {
       const personalWs: Workspace = {
-        id: 'ws_personal_' + Date.now(),
-        name: 'My Personal Workspace',
+        id: `ws_${userId}`,
+        name: `${userName || 'My'}'s Vault`,
         type: 'personal',
-        created_by: 'user_owner',
+        created_by: userId,
         currency: 'BDT',
-        description: 'Primary personal financial workspace with double-entry ledger.',
+        description: `Primary personal financial vault for ${userEmail || userName || userId}`,
         created_at: new Date().toISOString(),
       };
       this.saveWorkspace(personalWs);
 
-      // Seed categories for this workspace
+      // Seed categories for this user's workspace
       this.seedCategoriesForWorkspace(personalWs.id);
 
-      // Seed default accounts
+      // Seed default accounts for this user's workspace
       this.seedDefaultAccounts(personalWs.id);
+
+      // Cloud sync to Supabase
+      this.syncProfileAndWorkspaceToSupabase(userId, userName, userEmail, personalWs);
 
       return { workspace: personalWs, isNew: true };
     }
-    return { workspace: workspaces[0], isNew: false };
+
+    const active = workspaces[0];
+    this.ensureUserCockpitAccounts(active.id);
+    this.syncProfileAndWorkspaceToSupabase(userId, userName, userEmail, active);
+    return { workspace: active, isNew: false };
+  }
+
+  // Fallback for backward compatibility
+  initializeDefaultWorkspace(userId?: string, userName?: string): { workspace: Workspace; isNew: boolean } {
+    return this.initializeUserWorkspace(userId || 'user_owner', userName);
+  }
+
+  // Cloud sync to Supabase profiles & workspaces tables
+  private async syncProfileAndWorkspaceToSupabase(
+    userId: string, 
+    userName?: string, 
+    userEmail?: string,
+    ws?: Workspace
+  ) {
+    if (!isSupabaseConfigured() || !userId || userId === 'user_owner') return;
+
+    try {
+      // 1. Sync Profile
+      await supabase.from('profiles').upsert({
+        id: userId,
+        email: userEmail || '',
+        full_name: userName || '',
+        default_currency: 'BDT',
+        updated_at: new Date().toISOString(),
+      });
+
+      // 2. Sync Workspace if valid UUID format
+      const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(userId);
+      if (isUuid && ws) {
+        const { data: remoteWorkspaces } = await supabase
+          .from('workspaces')
+          .select('id, name')
+          .eq('created_by', userId);
+
+        if (!remoteWorkspaces || remoteWorkspaces.length === 0) {
+          const { data: createdWs } = await supabase.from('workspaces').insert({
+            name: ws.name,
+            type: ws.type,
+            created_by: userId,
+            currency: ws.currency,
+            description: ws.description,
+          }).select().single();
+
+          if (createdWs) {
+            await supabase.from('workspace_members').insert({
+              workspace_id: createdWs.id,
+              user_id: userId,
+              role: 'owner',
+            });
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('Supabase profile/workspace sync notice:', err);
+    }
   }
 
   seedCategoriesForWorkspace(workspaceId: string): void {

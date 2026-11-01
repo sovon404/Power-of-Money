@@ -20,6 +20,8 @@ import { OpeningBalanceWizard } from './components/setup/OpeningBalanceWizard';
 import { SettingsView } from './components/settings/SettingsView';
 import { NewTransactionModal } from './components/modals/NewTransactionModal';
 import { AuthGate } from './components/auth/AuthGate';
+import { AuthUser } from './types';
+import { supabase } from './lib/supabase';
 
 const VALID_VIEWS: NavItemKey[] = [
   'dashboard',
@@ -187,27 +189,78 @@ const AppContent: React.FC<AppContentProps> = ({ onSignOut }) => {
 
 export default function App() {
   // STRICT AUTHENTICATION GATE:
-  // Must go with definite account. No guest mode. No moving forward without signing in.
-  const [authUser, setAuthUser] = useState<{ email: string; name: string } | null>(() => {
+  // Must go with verified Supabase account. No guest bypass. No moving forward without real authentication.
+  const [authUser, setAuthUser] = useState<AuthUser | null>(() => {
     try {
       const saved = localStorage.getItem('pom_auth_session');
-      return saved ? JSON.parse(saved) : null;
+      const parsed = saved ? JSON.parse(saved) : null;
+      return parsed && parsed.id ? parsed : null;
     } catch {
       return null;
     }
   });
 
-  const handleSignOut = () => {
+  useEffect(() => {
+    // Check real Supabase session status
+    supabase.auth.getSession().then(({ data: { session }, error }) => {
+      if (error || !session?.user || !session.user.email_confirmed_at) {
+        if (!session?.user) {
+          localStorage.removeItem('pom_auth_session');
+          setAuthUser(null);
+        }
+      } else {
+        const verifiedUser: AuthUser = {
+          id: session.user.id,
+          email: session.user.email || '',
+          name: session.user.user_metadata?.full_name || session.user.email?.split('@')[0] || 'Vault Owner',
+        };
+        localStorage.setItem('pom_auth_session', JSON.stringify(verifiedUser));
+        setAuthUser(verifiedUser);
+      }
+    });
+
+    // Real-time auth subscription
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'SIGNED_OUT') {
+        localStorage.removeItem('pom_auth_session');
+        setAuthUser(null);
+      } else if (session?.user && session.user.email_confirmed_at) {
+        const verifiedUser: AuthUser = {
+          id: session.user.id,
+          email: session.user.email || '',
+          name: session.user.user_metadata?.full_name || session.user.email?.split('@')[0] || 'Vault Owner',
+        };
+        localStorage.setItem('pom_auth_session', JSON.stringify(verifiedUser));
+        setAuthUser(verifiedUser);
+      }
+    });
+
+    return () => {
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  const handleSignOut = async () => {
+    try {
+      await supabase.auth.signOut();
+    } catch (err) {
+      console.warn('Sign out notice:', err);
+    }
     localStorage.removeItem('pom_auth_session');
     setAuthUser(null);
   };
 
+  const handleAuthenticated = (user: AuthUser) => {
+    localStorage.setItem('pom_auth_session', JSON.stringify(user));
+    setAuthUser(user);
+  };
+
   if (!authUser) {
-    return <AuthGate onAuthenticated={(user) => setAuthUser(user)} />;
+    return <AuthGate onAuthenticated={handleAuthenticated} />;
   }
 
   return (
-    <WorkspaceProvider>
+    <WorkspaceProvider authUser={authUser}>
       <AppContent onSignOut={handleSignOut} />
     </WorkspaceProvider>
   );

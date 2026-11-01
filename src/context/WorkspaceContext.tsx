@@ -1,8 +1,9 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
-import { Workspace, WorkspaceRole } from '../types';
+import { Workspace, WorkspaceRole, AuthUser } from '../types';
 import { db } from '../services/db';
 
 interface WorkspaceContextType {
+  currentUser: AuthUser;
   currentWorkspace: Workspace | null;
   workspaces: Workspace[];
   userRole: WorkspaceRole;
@@ -17,15 +18,21 @@ interface WorkspaceContextType {
 
 const WorkspaceContext = createContext<WorkspaceContextType | undefined>(undefined);
 
-export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+interface WorkspaceProviderProps {
+  children: React.ReactNode;
+  authUser: AuthUser;
+}
+
+export const WorkspaceProvider: React.FC<WorkspaceProviderProps> = ({ children, authUser }) => {
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
   const [currentWorkspace, setCurrentWorkspace] = useState<Workspace | null>(null);
   const [userRole, setUserRole] = useState<WorkspaceRole>('owner');
   const [refreshKey, setRefreshKey] = useState(0);
 
-  // Initial setup check
+  // Initial setup check scoped to user
+  const setupKey = `pom_setup_completed_${authUser.id}`;
   const [isInitialSetupDone, setIsInitialSetupDone] = useState<boolean>(() => {
-    return localStorage.getItem('pom_setup_completed') === 'true';
+    return localStorage.getItem(setupKey) === 'true';
   });
 
   const refreshData = useCallback(() => {
@@ -33,35 +40,38 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   }, []);
 
   useEffect(() => {
-    const { workspace } = db.initializeDefaultWorkspace();
-    const all = db.getWorkspaces();
+    // Initialize or load workspace specifically bound to authUser.id
+    const { workspace } = db.initializeUserWorkspace(authUser.id, authUser.name, authUser.email);
+    const all = db.getWorkspaces(authUser.id);
     setWorkspaces(all);
     
-    // Default to first workspace or active one
-    const savedActiveId = localStorage.getItem('pom_active_workspace_id');
+    // Default to last active workspace for this user or the primary workspace
+    const userActiveWsKey = `pom_active_workspace_${authUser.id}`;
+    const savedActiveId = localStorage.getItem(userActiveWsKey);
     const active = all.find(w => w.id === savedActiveId) || workspace;
+    
     db.ensureUserCockpitAccounts(active.id);
     setCurrentWorkspace(active);
-    localStorage.setItem('pom_active_workspace_id', active.id);
-  }, [refreshKey]);
+    localStorage.setItem(userActiveWsKey, active.id);
+    setIsInitialSetupDone(localStorage.getItem(setupKey) === 'true');
+  }, [authUser.id, authUser.name, authUser.email, refreshKey, setupKey]);
 
   const switchWorkspace = (workspaceId: string) => {
     const found = workspaces.find(w => w.id === workspaceId);
     if (found) {
       setCurrentWorkspace(found);
-      localStorage.setItem('pom_active_workspace_id', found.id);
-      // For personal workspace default role is owner; for family workspace can be configured
-      setUserRole('owner');
+      localStorage.setItem(`pom_active_workspace_${authUser.id}`, found.id);
+      setUserRole(found.created_by === authUser.id ? 'owner' : 'editor');
       refreshData();
     }
   };
 
   const createFamilyWorkspace = (name: string, description?: string): Workspace => {
     const newWs: Workspace = {
-      id: 'ws_family_' + Date.now(),
+      id: `ws_family_${authUser.id}_${Date.now()}`,
       name,
       type: 'family',
-      created_by: 'user_owner',
+      created_by: authUser.id,
       currency: currentWorkspace?.currency || 'BDT',
       description: description || 'Family financial collaboration workspace',
       created_at: new Date().toISOString(),
@@ -70,13 +80,14 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     db.seedCategoriesForWorkspace(newWs.id);
     db.seedDefaultAccounts(newWs.id);
     
-    setWorkspaces(db.getWorkspaces());
+    const updated = db.getWorkspaces(authUser.id);
+    setWorkspaces(updated);
     switchWorkspace(newWs.id);
     return newWs;
   };
 
   const completeInitialSetup = () => {
-    localStorage.setItem('pom_setup_completed', 'true');
+    localStorage.setItem(setupKey, 'true');
     setIsInitialSetupDone(true);
     refreshData();
   };
@@ -98,6 +109,7 @@ export const WorkspaceProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   return (
     <WorkspaceContext.Provider
       value={{
+        currentUser: authUser,
         currentWorkspace,
         workspaces,
         userRole,

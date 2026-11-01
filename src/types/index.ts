@@ -3,6 +3,12 @@ export type WorkspaceRole = 'owner' | 'admin' | 'editor' | 'viewer';
 export type AccountClassification = 'asset' | 'liability' | 'equity' | 'income' | 'expense';
 export type NormalBalance = 'debit' | 'credit';
 
+export interface AuthUser {
+  id: string; // real Supabase UUID
+  email: string;
+  name: string;
+}
+
 export interface Workspace {
   id: string;
   name: string;
