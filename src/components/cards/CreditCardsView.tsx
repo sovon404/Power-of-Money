@@ -15,6 +15,8 @@ import {
 import { useWorkspace } from '../../context/WorkspaceContext';
 import { db } from '../../services/db';
 import { CreditCard, FinancialAccount } from '../../types';
+import { toUuid } from '../../lib/uuid';
+import { supabaseSync } from '../../services/supabaseSync';
 
 export const CreditCardsView: React.FC = () => {
   const { currentWorkspace, formatMoney, refreshData, canWrite } = useWorkspace();
@@ -59,13 +61,13 @@ export const CreditCardsView: React.FC = () => {
   const expenseCategories = categories.filter(c => c.type === 'expense');
   const journalEntries = db.getJournalEntries(workspaceId);
 
-  const handleAddCard = (e: React.FormEvent) => {
+  const handleAddCard = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!cardName.trim() || !lastFour.trim() || !creditLimit) return;
 
     const limit = parseFloat(creditLimit) || 0;
-    const cardId = 'card_' + Date.now();
-    const liabilityAccId = 'acc_card_liab_' + Date.now();
+    const cardId = toUuid(`card_${lastFour.trim()}_${workspaceId}_${Date.now()}`);
+    const liabilityAccId = toUuid(`acc_card_liab_${lastFour.trim()}_${workspaceId}`);
 
     // 1. Create underlying liability account in financial_accounts
     const liabAcc: FinancialAccount = {
@@ -85,6 +87,7 @@ export const CreditCardsView: React.FC = () => {
       created_at: new Date().toISOString(),
     };
     db.saveAccount(liabAcc);
+    await supabaseSync.syncAccount(liabAcc, workspaceId);
 
     // 2. Create Credit Card record
     const newCard: CreditCard = {
@@ -104,6 +107,7 @@ export const CreditCardsView: React.FC = () => {
       created_at: new Date().toISOString(),
     };
     db.saveCreditCard(newCard);
+    await supabaseSync.syncCreditCard(newCard, workspaceId);
 
     refreshData();
     setShowAddCardModal(false);
@@ -172,7 +176,7 @@ export const CreditCardsView: React.FC = () => {
       entry_date: chargeDate,
       lines: [
         {
-          account_id: '',
+          account_id: toUuid(`acc_expense_operating_${workspaceId}`),
           category_id: chargeCategoryId,
           line_type: 'debit',
           amount: amt,

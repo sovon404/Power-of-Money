@@ -63,35 +63,78 @@ export const WorkspaceProvider: React.FC<WorkspaceProviderProps> = ({ children, 
   }, [currentWorkspace]);
 
   useEffect(() => {
-    // Initialize or load workspace specifically bound to authUser.id
-    const { workspace } = db.initializeUserWorkspace(authUser.id, authUser.name, authUser.email);
-    const all = db.getWorkspaces(authUser.id);
-    setWorkspaces(all);
-    
-    // Default to last active workspace for this user or the primary workspace
-    const userActiveWsKey = `pom_active_workspace_${authUser.id}`;
-    const savedActiveId = localStorage.getItem(userActiveWsKey);
-    const active = all.find(w => w.id === savedActiveId) || workspace;
-    
-    // Purge any residual mock/dummy accounts so only real DB information is used
-    db.purgeLocalDemoData(active.id);
-    setCurrentWorkspace(active);
-    localStorage.setItem(userActiveWsKey, active.id);
-    setIsInitialSetupDone(localStorage.getItem(setupKey) === 'true');
+    let isMounted = true;
 
-    // Trigger immediate background sync with live Supabase database
-    import('../services/supabaseSync').then(({ supabaseSync }) => {
+    const setupUserWorkspace = async () => {
       setIsSyncingWithDb(true);
-      supabaseSync.pullRemoteWorkspaceData(active.id).then(remote => {
-        if (remote) {
+      try {
+        const { supabase, isSupabaseConfigured } = await import('../lib/supabase');
+        const { supabaseSync } = await import('../services/supabaseSync');
+
+        // 1. Sync profile first
+        await supabaseSync.syncProfile(authUser.id, authUser.email || '', authUser.name || '');
+
+        let userWorkspaces: Workspace[] = [];
+
+        // 2. Discover existing workspaces in Supabase
+        if (isSupabaseConfigured()) {
+          const { data: remoteWsList } = await supabase
+            .from('workspaces')
+            .select('*');
+
+          if (remoteWsList && remoteWsList.length > 0) {
+            userWorkspaces = remoteWsList.map(rw => ({
+              id: rw.id,
+              name: rw.name,
+              type: rw.type,
+              created_by: rw.created_by,
+              currency: rw.currency || 'BDT',
+              description: rw.description,
+              settings: rw.settings,
+              created_at: rw.created_at,
+            }));
+            userWorkspaces.forEach(w => db.saveWorkspace(w));
+          }
+        }
+
+        // 3. If no remote workspaces found, initialize user vault and write to Supabase
+        if (userWorkspaces.length === 0) {
+          const { workspace } = db.initializeUserWorkspace(authUser.id, authUser.name, authUser.email);
+          await supabaseSync.syncWorkspace(workspace, authUser.id);
+          userWorkspaces = [workspace];
+        }
+
+        const userActiveWsKey = `pom_active_workspace_${authUser.id}`;
+        const savedActiveId = localStorage.getItem(userActiveWsKey);
+        const active = userWorkspaces.find(w => w.id === savedActiveId) || userWorkspaces[0];
+
+        if (!isMounted) return;
+
+        db.purgeLocalDemoData(active.id);
+        setWorkspaces(userWorkspaces);
+        setCurrentWorkspace(active);
+        localStorage.setItem(userActiveWsKey, active.id);
+        setIsInitialSetupDone(localStorage.getItem(setupKey) === 'true');
+
+        // 4. Hydrate all accounts, cards, loans, properties, journal entries from Supabase
+        const remote = await supabaseSync.pullRemoteWorkspaceData(active.id);
+        if (remote && isMounted) {
           db.hydrateFromSupabase(remote, active.id);
           setLastDbSyncTime(new Date().toLocaleTimeString());
           setRefreshKey(prev => prev + 1);
         }
-      }).finally(() => {
-        setIsSyncingWithDb(false);
-      });
-    });
+      } catch (err) {
+        console.warn('Workspace discovery notice:', err);
+      } finally {
+        if (isMounted) setIsSyncingWithDb(false);
+      }
+    };
+
+    setupUserWorkspace();
+
+    return () => {
+      isMounted = false;
+    };
   }, [authUser.id, authUser.name, authUser.email, setupKey]);
 
   const switchWorkspace = (workspaceId: string) => {

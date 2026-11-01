@@ -352,11 +352,12 @@ class DatabaseEngine {
       created_at: new Date().toISOString(),
     };
 
+    const defaultOperatingAccId = toUuid(`acc_expense_operating_${workspaceId}`);
     const newLines: JournalLine[] = params.lines.map((l, i) => ({
       id: generateUuid(),
       journal_entry_id: entryId,
       workspace_id: workspaceId,
-      account_id: l.account_id,
+      account_id: l.account_id && l.account_id.trim() !== '' ? l.account_id : defaultOperatingAccId,
       line_type: l.line_type,
       amount: Number(l.amount),
       memo: l.memo || params.memo,

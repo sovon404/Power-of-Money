@@ -1,5 +1,5 @@
 import { supabase, isSupabaseConfigured } from '../lib/supabase';
-import { toUuid, generateUuid } from '../lib/uuid';
+import { toUuid } from '../lib/uuid';
 import { 
   Workspace, 
   FinancialAccount, 
@@ -33,13 +33,120 @@ class SupabaseSyncEngine {
     }
   }
 
-  // 2. Sync Workspace & Membership (WITHOUT .select() to prevent RLS returning error)
+  // Helper: Ensures the workspace exists in Supabase to prevent 23503 foreign key violation
+  async ensureRemoteWorkspace(workspaceId: string, userId?: string) {
+    if (!this.isAvailable() || !workspaceId) return;
+    const wsUuid = toUuid(workspaceId);
+    try {
+      const { data: existing } = await supabase
+        .from('workspaces')
+        .select('id')
+        .eq('id', wsUuid)
+        .maybeSingle();
+
+      if (!existing) {
+        let ownerId = userId;
+        if (!ownerId) {
+          const authUser = (await supabase.auth.getUser()).data.user;
+          ownerId = authUser?.id;
+        }
+        if (ownerId) {
+          await supabase.from('workspaces').upsert({
+            id: wsUuid,
+            name: 'Personal Finances',
+            type: 'personal',
+            created_by: ownerId,
+            currency: 'BDT',
+            description: 'Personal financial workspace',
+            updated_at: new Date().toISOString(),
+          });
+          await supabase.from('workspace_members').upsert({
+            id: toUuid(`member_${wsUuid}_${ownerId}`),
+            workspace_id: wsUuid,
+            user_id: ownerId,
+            role: 'owner',
+            status: 'active',
+            updated_at: new Date().toISOString(),
+          });
+        }
+      }
+    } catch (e) {
+      console.warn('ensureRemoteWorkspace notice:', e);
+    }
+  }
+
+  // Helper: Ensures an account exists in Supabase before foreign key references are inserted
+  async ensureRemoteAccount(accountId: string, workspaceId: string, defaultName?: string, defaultType: string = 'bank') {
+    if (!this.isAvailable() || !accountId) return;
+    const accUuid = toUuid(accountId);
+    const wsUuid = toUuid(workspaceId);
+    try {
+      const { data: existing } = await supabase
+        .from('financial_accounts')
+        .select('id')
+        .eq('id', accUuid)
+        .maybeSingle();
+
+      if (!existing) {
+        await supabase.from('financial_accounts').upsert({
+          id: accUuid,
+          workspace_id: wsUuid,
+          name: defaultName || 'Account',
+          account_type_id: defaultType,
+          provider: defaultType === 'credit_card' ? 'Credit Card' : 'Other',
+          currency: 'BDT',
+          opening_balance: 0,
+          opening_date: new Date().toISOString().split('T')[0],
+          current_balance_cached: 0,
+          is_archived: false,
+          icon: defaultType === 'credit_card' ? 'credit-card' : 'wallet',
+          color: defaultType === 'credit_card' ? '#e11d48' : '#0284c7',
+          updated_at: new Date().toISOString(),
+        });
+      }
+    } catch (e) {
+      console.warn('ensureRemoteAccount notice:', e);
+    }
+  }
+
+  // Helper: Ensures a category exists in Supabase before journal_lines reference it
+  async ensureRemoteCategory(categoryId: string, workspaceId: string, defaultName?: string) {
+    if (!this.isAvailable() || !categoryId) return;
+    const catUuid = toUuid(categoryId);
+    const wsUuid = toUuid(workspaceId);
+    try {
+      const { data: existing } = await supabase
+        .from('categories')
+        .select('id')
+        .eq('id', catUuid)
+        .maybeSingle();
+
+      if (!existing) {
+        await supabase.from('categories').upsert({
+          id: catUuid,
+          workspace_id: wsUuid,
+          name: defaultName || 'General',
+          type: 'expense',
+          accounting_classification: 'expense_operating',
+          icon: 'tag',
+          color: '#64748b',
+          is_seed: false,
+          is_archived: false,
+          sort_order: 99,
+          updated_at: new Date().toISOString(),
+        });
+      }
+    } catch (e) {
+      console.warn('ensureRemoteCategory notice:', e);
+    }
+  }
+
+  // 2. Sync Workspace & Membership
   async syncWorkspace(workspace: Workspace, userId: string) {
     if (!this.isAvailable() || !userId) return;
     const wsUuid = toUuid(workspace.id);
 
     try {
-      // 1. Insert/update workspace
       await supabase.from('workspaces').upsert({
         id: wsUuid,
         name: workspace.name,
@@ -55,7 +162,6 @@ class SupabaseSyncEngine {
         updated_at: new Date().toISOString(),
       });
 
-      // 2. Ensure owner membership
       await supabase.from('workspace_members').upsert({
         id: toUuid(`member_${wsUuid}_${userId}`),
         workspace_id: wsUuid,
@@ -72,10 +178,13 @@ class SupabaseSyncEngine {
   // 3. Sync Financial Account
   async syncAccount(account: FinancialAccount, workspaceId: string) {
     if (!this.isAvailable()) return;
+    const wsUuid = toUuid(workspaceId);
     try {
-      await supabase.from('financial_accounts').upsert({
+      await this.ensureRemoteWorkspace(workspaceId);
+
+      const { error } = await supabase.from('financial_accounts').upsert({
         id: toUuid(account.id),
-        workspace_id: toUuid(workspaceId),
+        workspace_id: wsUuid,
         name: account.name,
         account_type_id: account.account_type_id,
         provider: account.provider || 'Other',
@@ -90,6 +199,10 @@ class SupabaseSyncEngine {
         notes: account.notes || null,
         updated_at: new Date().toISOString(),
       });
+
+      if (error) {
+        console.error('Supabase financial_accounts error:', error);
+      }
     } catch (err) {
       console.warn('Sync account error:', err);
     }
@@ -98,10 +211,13 @@ class SupabaseSyncEngine {
   // 4. Sync Category
   async syncCategory(cat: Category, workspaceId: string) {
     if (!this.isAvailable()) return;
+    const wsUuid = toUuid(workspaceId);
     try {
+      await this.ensureRemoteWorkspace(workspaceId);
+
       await supabase.from('categories').upsert({
         id: toUuid(cat.id),
-        workspace_id: toUuid(workspaceId),
+        workspace_id: wsUuid,
         name: cat.name,
         type: cat.type,
         accounting_classification: cat.accounting_classification || 'expense_operating',
@@ -117,14 +233,26 @@ class SupabaseSyncEngine {
     }
   }
 
-  // 5. Sync Journal Entry & Lines (Omit identity column 'entry_number')
+  // 5. Sync Journal Entry & Lines
   async syncJournalEntry(entry: JournalEntry, workspaceId: string, userId?: string) {
     if (!this.isAvailable()) return;
     const entryUuid = toUuid(entry.id);
     const wsUuid = toUuid(workspaceId);
 
     try {
-      // Upsert transaction header
+      await this.ensureRemoteWorkspace(workspaceId, userId);
+
+      // Ensure all line accounts and categories exist in Supabase first to prevent 23503
+      if (entry.lines && entry.lines.length > 0) {
+        for (const line of entry.lines) {
+          await this.ensureRemoteAccount(line.account_id, workspaceId);
+          if (line.category_id) {
+            await this.ensureRemoteCategory(line.category_id, workspaceId);
+          }
+        }
+      }
+
+      // Upsert transaction header (omit identity column entry_number)
       await supabase.from('journal_entries').upsert({
         id: entryUuid,
         workspace_id: wsUuid,
@@ -138,7 +266,7 @@ class SupabaseSyncEngine {
         updated_at: new Date().toISOString(),
       });
 
-      // Upsert transaction debit/credit lines
+      // Upsert debit/credit lines
       if (entry.lines && entry.lines.length > 0) {
         const linesPayload = entry.lines.map((l, i) => ({
           id: toUuid(l.id || `${entryUuid}_line_${i}`),
@@ -160,14 +288,30 @@ class SupabaseSyncEngine {
     }
   }
 
-  // 6. Sync Credit Card
+  // 6. Sync Credit Card (Guarantees workspace and underlying liability account exist first!)
   async syncCreditCard(card: CreditCard, workspaceId: string) {
     if (!this.isAvailable()) return;
+    const wsUuid = toUuid(workspaceId);
+    const accUuid = toUuid(card.account_id);
+    const cardUuid = toUuid(card.id);
+
     try {
-      await supabase.from('credit_cards').upsert({
-        id: toUuid(card.id),
-        workspace_id: toUuid(workspaceId),
-        account_id: toUuid(card.account_id),
+      // Step 1: Ensure workspace exists in Supabase
+      await this.ensureRemoteWorkspace(workspaceId);
+
+      // Step 2: Ensure the underlying liability account exists in Supabase FIRST
+      await this.ensureRemoteAccount(
+        card.account_id, 
+        workspaceId, 
+        `${card.card_name} (${card.last_four_digits})`, 
+        'credit_card'
+      );
+
+      // Step 3: Now upsert the credit card record with 100% valid foreign keys
+      const { error } = await supabase.from('credit_cards').upsert({
+        id: cardUuid,
+        workspace_id: wsUuid,
+        account_id: accUuid,
         card_name: card.card_name,
         issuing_bank: card.issuing_bank,
         card_network: card.card_network || 'Visa',
@@ -181,6 +325,10 @@ class SupabaseSyncEngine {
         notes: card.notes || null,
         updated_at: new Date().toISOString(),
       });
+
+      if (error) {
+        console.error('Supabase credit_cards upsert error:', error);
+      }
     } catch (err) {
       console.warn('Sync card error:', err);
     }
@@ -189,10 +337,16 @@ class SupabaseSyncEngine {
   // 7. Sync Loan
   async syncLoan(loan: Loan, workspaceId: string) {
     if (!this.isAvailable()) return;
+    const wsUuid = toUuid(workspaceId);
     try {
+      await this.ensureRemoteWorkspace(workspaceId);
+      if (loan.account_id) {
+        await this.ensureRemoteAccount(loan.account_id, workspaceId);
+      }
+
       await supabase.from('loans').upsert({
         id: toUuid(loan.id),
-        workspace_id: toUuid(workspaceId),
+        workspace_id: wsUuid,
         type: loan.type,
         account_id: loan.account_id ? toUuid(loan.account_id) : null,
         title: loan.title,
@@ -220,10 +374,13 @@ class SupabaseSyncEngine {
   // 8. Sync Property
   async syncProperty(property: Property, workspaceId: string) {
     if (!this.isAvailable()) return;
+    const wsUuid = toUuid(workspaceId);
     try {
+      await this.ensureRemoteWorkspace(workspaceId);
+
       await supabase.from('properties').upsert({
         id: toUuid(property.id),
-        workspace_id: toUuid(workspaceId),
+        workspace_id: wsUuid,
         property_code: property.property_code,
         name: property.name,
         category: property.category || 'Residential Plot',
@@ -261,10 +418,14 @@ class SupabaseSyncEngine {
   // 9. Sync Budget
   async syncBudget(budget: Budget, workspaceId: string) {
     if (!this.isAvailable()) return;
+    const wsUuid = toUuid(workspaceId);
     try {
+      await this.ensureRemoteWorkspace(workspaceId);
+      await this.ensureRemoteCategory(budget.category_id, workspaceId);
+
       await supabase.from('budgets').upsert({
         id: toUuid(budget.id),
-        workspace_id: toUuid(workspaceId),
+        workspace_id: wsUuid,
         category_id: toUuid(budget.category_id),
         period_type: budget.period_type || 'monthly',
         period_start: budget.period_start,
@@ -282,10 +443,16 @@ class SupabaseSyncEngine {
   // 10. Sync Savings Goal
   async syncSavingsGoal(goal: SavingsGoal, workspaceId: string) {
     if (!this.isAvailable()) return;
+    const wsUuid = toUuid(workspaceId);
     try {
+      await this.ensureRemoteWorkspace(workspaceId);
+      if (goal.account_id) {
+        await this.ensureRemoteAccount(goal.account_id, workspaceId);
+      }
+
       await supabase.from('savings_goals').upsert({
         id: toUuid(goal.id),
-        workspace_id: toUuid(workspaceId),
+        workspace_id: wsUuid,
         account_id: goal.account_id ? toUuid(goal.account_id) : null,
         name: goal.name,
         goal_type: goal.goal_type || 'dps',
