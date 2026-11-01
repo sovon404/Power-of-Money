@@ -89,7 +89,7 @@ export const AccountsView: React.FC = () => {
 
   const handleDeleteAccount = (acc: FinancialAccount) => {
     if (confirm(`Are you sure you want to delete account "${acc.name}"? This action cannot be undone.`)) {
-      db.deleteAccount(workspaceId, acc.id);
+      db.deleteAccount(acc.id, workspaceId);
       refreshData();
     }
   };

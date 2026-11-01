@@ -79,7 +79,7 @@ export const PropertyRegisterView: React.FC = () => {
 
   const handleDeleteProperty = (p: Property) => {
     if (confirm(`Are you sure you want to delete property "${p.name}"?`)) {
-      db.deleteProperty(workspaceId, p.id);
+      db.deleteProperty(p.id, workspaceId);
       refreshData();
     }
   };

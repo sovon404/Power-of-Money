@@ -278,9 +278,24 @@ class DatabaseEngine {
     supabaseSync.syncAccount(account, account.workspace_id);
   }
 
-  deleteAccount(accountId: string, workspaceId: string): void {
+  deleteAccount(arg1: string, arg2: string): void {
     const list = this.get<FinancialAccount[]>(STORAGE_KEYS.ACCOUNTS, []);
+    let accountId = arg1;
+    let workspaceId = arg2;
+    if (list.some(a => a.id === arg2) && !list.some(a => a.id === arg1)) {
+      accountId = arg2;
+      workspaceId = arg1;
+    }
     this.set(STORAGE_KEYS.ACCOUNTS, list.filter(a => a.id !== accountId));
+
+    // Also purge local journal lines associated with this account
+    const lines = this.get<JournalLine[]>(STORAGE_KEYS.JOURNAL_LINES, []);
+    this.set(STORAGE_KEYS.JOURNAL_LINES, lines.filter(l => l.account_id !== accountId));
+
+    // Also purge local credit cards tied to this account
+    const cards = this.get<CreditCard[]>(STORAGE_KEYS.CREDIT_CARDS, []);
+    this.set(STORAGE_KEYS.CREDIT_CARDS, cards.filter(c => c.account_id !== accountId));
+
     supabaseSync.deleteAccount(accountId, workspaceId);
   }
 
@@ -523,10 +538,17 @@ class DatabaseEngine {
   /**
    * Delete a Journal Entry completely (reverts account balances and removes entry & lines)
    */
-  deleteJournalEntry(workspaceId: string, entryId: string): { success: boolean; error?: string } {
+  deleteJournalEntry(arg1: string, arg2: string): { success: boolean; error?: string } {
     const currentEntries = this.get<JournalEntry[]>(STORAGE_KEYS.JOURNAL_ENTRIES, []);
     const currentLines = this.get<JournalLine[]>(STORAGE_KEYS.JOURNAL_LINES, []);
     const accounts = this.get<FinancialAccount[]>(STORAGE_KEYS.ACCOUNTS, []);
+
+    let workspaceId = arg1;
+    let entryId = arg2;
+    if (currentEntries.some(e => e.id === arg1) && !currentEntries.some(e => e.id === arg2)) {
+      entryId = arg1;
+      workspaceId = arg2;
+    }
 
     const entryToDelete = currentEntries.find(e => e.id === entryId);
     if (!entryToDelete) {
@@ -682,8 +704,14 @@ class DatabaseEngine {
     supabaseSync.syncCreditCard(card, card.workspace_id);
   }
 
-  deleteCreditCard(cardId: string, workspaceId: string): void {
+  deleteCreditCard(arg1: string, arg2: string): void {
     const list = this.get<CreditCard[]>(STORAGE_KEYS.CREDIT_CARDS, []);
+    let cardId = arg1;
+    let workspaceId = arg2;
+    if (list.some(c => c.id === arg2) && !list.some(c => c.id === arg1)) {
+      cardId = arg2;
+      workspaceId = arg1;
+    }
     const cardToDelete = list.find(c => c.id === cardId);
     this.set(STORAGE_KEYS.CREDIT_CARDS, list.filter(c => c.id !== cardId));
     supabaseSync.deleteCreditCard(cardId, workspaceId);
@@ -712,8 +740,14 @@ class DatabaseEngine {
     supabaseSync.syncLoan(loan, loan.workspace_id);
   }
 
-  deleteLoan(loanId: string, workspaceId: string): void {
+  deleteLoan(arg1: string, arg2: string): void {
     const list = this.get<Loan[]>(STORAGE_KEYS.LOANS, []);
+    let loanId = arg1;
+    let workspaceId = arg2;
+    if (list.some(l => l.id === arg2) && !list.some(l => l.id === arg1)) {
+      loanId = arg2;
+      workspaceId = arg1;
+    }
     this.set(STORAGE_KEYS.LOANS, list.filter(l => l.id !== loanId));
     supabaseSync.deleteLoan(loanId, workspaceId);
   }
@@ -736,8 +770,14 @@ class DatabaseEngine {
     supabaseSync.syncProperty(prop, prop.workspace_id);
   }
 
-  deleteProperty(propertyId: string, workspaceId: string): void {
+  deleteProperty(arg1: string, arg2: string): void {
     const list = this.get<Property[]>(STORAGE_KEYS.PROPERTIES, []);
+    let propertyId = arg1;
+    let workspaceId = arg2;
+    if (list.some(p => p.id === arg2) && !list.some(p => p.id === arg1)) {
+      propertyId = arg2;
+      workspaceId = arg1;
+    }
     this.set(STORAGE_KEYS.PROPERTIES, list.filter(p => p.id !== propertyId));
     supabaseSync.deleteProperty(propertyId, workspaceId);
   }
@@ -760,8 +800,14 @@ class DatabaseEngine {
     supabaseSync.syncBudget(budget, budget.workspace_id);
   }
 
-  deleteBudget(budgetId: string, workspaceId: string): void {
+  deleteBudget(arg1: string, arg2: string): void {
     const list = this.get<Budget[]>(STORAGE_KEYS.BUDGETS, []);
+    let budgetId = arg1;
+    let workspaceId = arg2;
+    if (list.some(b => b.id === arg2) && !list.some(b => b.id === arg1)) {
+      budgetId = arg2;
+      workspaceId = arg1;
+    }
     this.set(STORAGE_KEYS.BUDGETS, list.filter(b => b.id !== budgetId));
     supabaseSync.deleteBudget(budgetId, workspaceId);
   }
@@ -784,8 +830,14 @@ class DatabaseEngine {
     supabaseSync.syncSavingsGoal(goal, goal.workspace_id);
   }
 
-  deleteSavingsGoal(goalId: string, workspaceId: string): void {
+  deleteSavingsGoal(arg1: string, arg2: string): void {
     const list = this.get<SavingsGoal[]>(STORAGE_KEYS.SAVINGS_GOALS, []);
+    let goalId = arg1;
+    let workspaceId = arg2;
+    if (list.some(g => g.id === arg2) && !list.some(g => g.id === arg1)) {
+      goalId = arg2;
+      workspaceId = arg1;
+    }
     this.set(STORAGE_KEYS.SAVINGS_GOALS, list.filter(g => g.id !== goalId));
     supabaseSync.deleteSavingsGoal(goalId, workspaceId);
   }

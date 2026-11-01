@@ -58,7 +58,7 @@ export const BudgetsView: React.FC = () => {
 
   const handleDeleteBudget = (b: Budget) => {
     if (confirm('Are you sure you want to delete this category budget limit?')) {
-      db.deleteBudget(workspaceId, b.id);
+      db.deleteBudget(b.id, workspaceId);
       refreshData();
     }
   };

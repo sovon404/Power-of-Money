@@ -68,7 +68,7 @@ export const LoansView: React.FC = () => {
 
   const handleDeleteLoan = (loan: Loan) => {
     if (confirm(`Are you sure you want to delete the loan "${loan.title}" (${loan.counterparty_name})?`)) {
-      db.deleteLoan(workspaceId, loan.id);
+      db.deleteLoan(loan.id, workspaceId);
       refreshData();
     }
   };

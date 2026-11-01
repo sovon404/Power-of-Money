@@ -537,7 +537,8 @@ class SupabaseSyncEngine {
     const wsUuid = toUuid(workspaceId);
     try {
       await supabase.from('journal_lines').delete().eq('journal_entry_id', entryUuid);
-      await supabase.from('journal_entries').delete().eq('id', entryUuid).eq('workspace_id', wsUuid);
+      const { error } = await supabase.from('journal_entries').delete().eq('id', entryUuid).eq('workspace_id', wsUuid);
+      if (error) console.error('Delete journal entry error from Supabase:', error);
     } catch (err) {
       console.warn('Delete journal entry error:', err);
     }
@@ -548,7 +549,9 @@ class SupabaseSyncEngine {
     const cardUuid = toUuid(cardId);
     const wsUuid = toUuid(workspaceId);
     try {
-      await supabase.from('credit_cards').delete().eq('id', cardUuid).eq('workspace_id', wsUuid);
+      await supabase.from('credit_card_statements').delete().eq('credit_card_id', cardUuid);
+      const { error } = await supabase.from('credit_cards').delete().eq('id', cardUuid).eq('workspace_id', wsUuid);
+      if (error) console.error('Delete credit card error from Supabase:', error);
     } catch (err) {
       console.warn('Delete credit card error:', err);
     }
@@ -559,7 +562,17 @@ class SupabaseSyncEngine {
     const accUuid = toUuid(accountId);
     const wsUuid = toUuid(workspaceId);
     try {
-      await supabase.from('financial_accounts').delete().eq('id', accUuid).eq('workspace_id', wsUuid);
+      // 1. Delete associated credit cards referencing this account
+      await supabase.from('credit_cards').delete().eq('account_id', accUuid).eq('workspace_id', wsUuid);
+      // 2. Unlink any loans referencing this account
+      await supabase.from('loans').update({ account_id: null }).eq('account_id', accUuid).eq('workspace_id', wsUuid);
+      // 3. Unlink any savings goals referencing this account
+      await supabase.from('savings_goals').update({ account_id: null }).eq('account_id', accUuid).eq('workspace_id', wsUuid);
+      // 4. Delete journal lines referencing this account
+      await supabase.from('journal_lines').delete().eq('account_id', accUuid).eq('workspace_id', wsUuid);
+      // 5. Delete the account itself
+      const { error } = await supabase.from('financial_accounts').delete().eq('id', accUuid).eq('workspace_id', wsUuid);
+      if (error) console.error('Delete account error from Supabase:', error);
     } catch (err) {
       console.warn('Delete account error:', err);
     }
@@ -571,7 +584,8 @@ class SupabaseSyncEngine {
     const wsUuid = toUuid(workspaceId);
     try {
       await supabase.from('loan_payments').delete().eq('loan_id', loanUuid);
-      await supabase.from('loans').delete().eq('id', loanUuid).eq('workspace_id', wsUuid);
+      const { error } = await supabase.from('loans').delete().eq('id', loanUuid).eq('workspace_id', wsUuid);
+      if (error) console.error('Delete loan error from Supabase:', error);
     } catch (err) {
       console.warn('Delete loan error:', err);
     }
@@ -584,7 +598,9 @@ class SupabaseSyncEngine {
     try {
       await supabase.from('property_recoveries').delete().eq('property_id', propUuid);
       await supabase.from('property_valuations').delete().eq('property_id', propUuid);
-      await supabase.from('properties').delete().eq('id', propUuid).eq('workspace_id', wsUuid);
+      await supabase.from('property_owners').delete().eq('property_id', propUuid);
+      const { error } = await supabase.from('properties').delete().eq('id', propUuid).eq('workspace_id', wsUuid);
+      if (error) console.error('Delete property error from Supabase:', error);
     } catch (err) {
       console.warn('Delete property error:', err);
     }
@@ -595,7 +611,8 @@ class SupabaseSyncEngine {
     const budgetUuid = toUuid(budgetId);
     const wsUuid = toUuid(workspaceId);
     try {
-      await supabase.from('budgets').delete().eq('id', budgetUuid).eq('workspace_id', wsUuid);
+      const { error } = await supabase.from('budgets').delete().eq('id', budgetUuid).eq('workspace_id', wsUuid);
+      if (error) console.error('Delete budget error from Supabase:', error);
     } catch (err) {
       console.warn('Delete budget error:', err);
     }
@@ -606,7 +623,8 @@ class SupabaseSyncEngine {
     const goalUuid = toUuid(goalId);
     const wsUuid = toUuid(workspaceId);
     try {
-      await supabase.from('savings_goals').delete().eq('id', goalUuid).eq('workspace_id', wsUuid);
+      const { error } = await supabase.from('savings_goals').delete().eq('id', goalUuid).eq('workspace_id', wsUuid);
+      if (error) console.error('Delete savings goal error from Supabase:', error);
     } catch (err) {
       console.warn('Delete savings goal error:', err);
     }
@@ -617,7 +635,8 @@ class SupabaseSyncEngine {
     const catUuid = toUuid(categoryId);
     const wsUuid = toUuid(workspaceId);
     try {
-      await supabase.from('categories').delete().eq('id', catUuid).eq('workspace_id', wsUuid);
+      const { error } = await supabase.from('categories').delete().eq('id', catUuid).eq('workspace_id', wsUuid);
+      if (error) console.error('Delete category error from Supabase:', error);
     } catch (err) {
       console.warn('Delete category error:', err);
     }
