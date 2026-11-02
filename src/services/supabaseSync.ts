@@ -231,6 +231,9 @@ class SupabaseSyncEngine {
       if (cat.income_type) {
         catPayload.income_type = cat.income_type;
       }
+      if (cat.target_savings_account_id) {
+        catPayload.target_savings_account_id = toUuid(cat.target_savings_account_id);
+      }
 
       try {
         const { error } = await supabase.from('categories').upsert(catPayload);
@@ -243,6 +246,16 @@ class SupabaseSyncEngine {
               .update(fieldsToUpdate)
               .eq('workspace_id', wsUuid)
               .ilike('name', cat.name);
+          } else if (error.code === '23514' || error.message?.includes('check constraint') || error.message?.includes('categories_type_check')) {
+            // Check constraint fallback for older database schema
+            catPayload.type = 'transfer_allocation';
+            if (catPayload.accounting_classification === 'asset_savings') {
+              catPayload.accounting_classification = 'asset_transfer';
+            }
+            await supabase.from('categories').upsert(catPayload);
+          } else if (error.message?.includes('target_savings_account_id') || error.code === '42703') {
+            delete catPayload.target_savings_account_id;
+            await supabase.from('categories').upsert(catPayload);
           } else if (error.message?.includes('income_type') || error.details?.includes('income_type') || error.code === '42703') {
             delete catPayload.income_type;
             const { error: fallbackErr } = await supabase.from('categories').upsert(catPayload);
@@ -260,6 +273,7 @@ class SupabaseSyncEngine {
         }
       } catch (err) {
         delete catPayload.income_type;
+        delete catPayload.target_savings_account_id;
         try {
           await supabase.from('categories').upsert(catPayload);
         } catch {

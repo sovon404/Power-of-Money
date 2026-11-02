@@ -153,13 +153,15 @@ export interface Category {
   id: string;
   workspace_id: string;
   name: string;
-  type: 'income' | 'expense' | 'transfer_allocation';
+  type: 'income' | 'expense' | 'saving' | 'transfer_allocation';
   income_type?: string;
+  target_savings_account_id?: string;
   accounting_classification: 
     | 'expense_operating'
     | 'expense_finance'
     | 'liability_reduction'
     | 'asset_transfer'
+    | 'asset_savings'
     | 'receivable_outflow'
     | 'income_operating';
   icon: string;

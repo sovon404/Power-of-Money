@@ -115,9 +115,17 @@ export const SavingsGoalsView: React.FC = () => {
     const amt = parseFloat(contributeAmount);
     if (isNaN(amt) || amt <= 0) return;
 
-    // Double-entry rule for DPS contribution:
-    // This is an asset transfer, NOT an expense!
-    // Debit: DPS / Savings Asset
+    const savingsAccs = accounts.filter(a => ['savings_dps', 'investment'].includes(a.account_type_id));
+    let targetAccId = selectedGoal.account_id;
+    if (!targetAccId) {
+      const match = savingsAccs.find(a => a.name.toLowerCase() === selectedGoal.name.toLowerCase()) 
+        || savingsAccs.find(a => selectedGoal.name.toLowerCase().includes(a.name.toLowerCase()))
+        || savingsAccs[0];
+      targetAccId = match?.id || fundingAccount;
+    }
+
+    // Double-entry rule for DPS / Savings contribution:
+    // Debit: Target Savings Head Account
     // Credit: Funding Bank / Cash Account
     db.postJournalEntry(workspaceId, {
       memo: `DPS / Savings Contribution: ${selectedGoal.name}`,
@@ -126,7 +134,7 @@ export const SavingsGoalsView: React.FC = () => {
       entry_date: new Date().toISOString().split('T')[0],
       lines: [
         {
-          account_id: fundingAccount, // offset
+          account_id: targetAccId,
           line_type: 'debit',
           amount: amt,
           memo: `Savings asset allocation: ${selectedGoal.name}`,
@@ -135,7 +143,7 @@ export const SavingsGoalsView: React.FC = () => {
           account_id: fundingAccount,
           line_type: 'credit',
           amount: amt,
-          memo: `Transfer to savings goal: ${selectedGoal.name}`,
+          memo: `Funding transfer for ${selectedGoal.name}`,
         },
       ],
     });

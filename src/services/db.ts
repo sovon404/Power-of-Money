@@ -43,7 +43,7 @@ const STORAGE_KEYS = {
 // Seed Categories specified by user
 export const SEED_CATEGORIES_DATA: Array<{
   name: string;
-  type: 'income' | 'expense' | 'transfer_allocation';
+  type: 'income' | 'expense' | 'saving' | 'transfer_allocation';
   income_type?: string;
   accounting_classification: any;
   icon: string;
@@ -51,13 +51,13 @@ export const SEED_CATEGORIES_DATA: Array<{
 }> = [
   { name: 'Home Expense', type: 'expense', accounting_classification: 'expense_operating', icon: 'home', color: '#0284c7' },
   { name: 'Loan Repayment', type: 'expense', accounting_classification: 'liability_reduction', icon: 'shield-alert', color: '#e11d48' },
-  { name: 'Dps', type: 'transfer_allocation', accounting_classification: 'asset_transfer', icon: 'piggy-bank', color: '#16a34a' },
+  { name: 'Dps', type: 'saving', accounting_classification: 'asset_savings', icon: 'piggy-bank', color: '#16a34a' },
   { name: 'Friends Fund Installment', type: 'expense', accounting_classification: 'liability_reduction', icon: 'users', color: '#ca8a04' },
   { name: 'Medical (Family)', type: 'expense', accounting_classification: 'expense_operating', icon: 'heart-pulse', color: '#dc2626' },
   { name: 'Investment', type: 'transfer_allocation', accounting_classification: 'asset_transfer', icon: 'trending-up', color: '#059669' },
   { name: 'Pop-Up Expenses', type: 'expense', accounting_classification: 'expense_operating', icon: 'sparkles', color: '#ea580c' },
   { name: 'Megabite', type: 'expense', accounting_classification: 'expense_operating', icon: 'wifi', color: '#2563eb' },
-  { name: 'Dsp (BAF)', type: 'transfer_allocation', accounting_classification: 'asset_transfer', icon: 'landmark', color: '#0d9488' },
+  { name: 'Dsp (BAF)', type: 'saving', accounting_classification: 'asset_savings', icon: 'landmark', color: '#0d9488' },
   { name: 'Los Fund (Installment)', type: 'expense', accounting_classification: 'liability_reduction', icon: 'layers', color: '#9333ea' },
   { name: 'Non-Interest Loan Repayment', type: 'expense', accounting_classification: 'liability_reduction', icon: 'handshake', color: '#475569' },
   { name: 'Leave', type: 'expense', accounting_classification: 'expense_operating', icon: 'calendar', color: '#64748b' },
@@ -81,7 +81,7 @@ export const SEED_CATEGORIES_DATA: Array<{
   { name: 'Personal (Recreations)', type: 'expense', accounting_classification: 'expense_operating', icon: 'film', color: '#14b8a6' },
   { name: 'Others (svc)', type: 'expense', accounting_classification: 'expense_operating', icon: 'tool', color: '#71717a' },
   { name: 'Donations', type: 'expense', accounting_classification: 'expense_operating', icon: 'gift', color: '#22c55e' },
-  { name: 'Unity Fund-2026', type: 'expense', accounting_classification: 'liability_reduction', icon: 'flag', color: '#eab308' },
+  { name: 'Unity Fund-2026', type: 'saving', accounting_classification: 'asset_savings', icon: 'flag', color: '#eab308' },
   { name: 'Protein Target', type: 'expense', accounting_classification: 'expense_operating', icon: 'activity', color: '#10b981' },
   { name: 'Adjustment', type: 'expense', accounting_classification: 'expense_operating', icon: 'sliders', color: '#64748b' },
   { name: 'FITA', type: 'expense', accounting_classification: 'expense_operating', icon: 'award', color: '#f59e0b' },
@@ -211,7 +211,7 @@ class DatabaseEngine {
       missing.forEach(cat => supabaseSync.syncCategory(cat, workspaceId));
     }
 
-    // Also enrich any existing income categories that lack income_type
+    // Also enrich any existing income categories or upgrade saving categories
     resultCats = resultCats.map(cat => {
       if (cat.workspace_id === workspaceId && cat.type === 'income' && !cat.income_type) {
         updated = true;
@@ -225,6 +225,23 @@ class DatabaseEngine {
         );
         return { ...cat, income_type: inferredType };
       }
+
+      if (cat.workspace_id === workspaceId) {
+        const seedMatch = SEED_CATEGORIES_DATA.find(s => s.name.toLowerCase() === cat.name.toLowerCase());
+        if (seedMatch && seedMatch.type === 'saving' && (cat.type !== 'saving' || !cat.target_savings_account_id)) {
+          updated = true;
+          const defaultTargetAcc = cat.name.toLowerCase().includes('unity') 
+            ? toUuid(`acc_unity_fund_${workspaceId}`) 
+            : toUuid(`acc_dps_baf_${workspaceId}`);
+          return {
+            ...cat,
+            type: 'saving',
+            accounting_classification: 'asset_savings' as any,
+            target_savings_account_id: cat.target_savings_account_id || defaultTargetAcc,
+          };
+        }
+      }
+
       return cat;
     });
 

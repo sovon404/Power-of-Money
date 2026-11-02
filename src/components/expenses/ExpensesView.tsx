@@ -12,7 +12,8 @@ import {
   CheckCircle2, 
   Search,
   Sparkles,
-  ArrowRight
+  ArrowRight,
+  PiggyBank
 } from 'lucide-react';
 import { useWorkspace } from '../../context/WorkspaceContext';
 import { db } from '../../services/db';
@@ -34,11 +35,12 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
 
   const accounts = db.getAccounts(workspaceId).filter(a => !a.is_archived);
   const categories = db.getCategories(workspaceId);
-  const expenseCategories = categories.filter(c => c.type === 'expense');
+  const expenseCategories = categories.filter(c => c.type === 'expense' || c.type === 'saving');
   const journalEntries = db.getJournalEntries(workspaceId);
 
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [selectedChannel, setSelectedChannel] = useState<string>('all');
+  const [outflowFilter, setOutflowFilter] = useState<'all' | 'operating' | 'savings'>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [dateFilter, setDateFilter] = useState<'this_month' | 'last_month' | 'all'>('this_month');
 
@@ -59,6 +61,8 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
     channelName: string;
     channelType: string;
     counterparty?: string;
+    isSavingAllocation?: boolean;
+    targetSavingsHeadName?: string;
   }
 
   const expenseRows: ExpenseRow[] = [];
@@ -111,29 +115,29 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
 
     const payerAcc = creditLine?.account_id ? accounts.find(a => a.id === creditLine.account_id) : undefined;
 
-    // 3. Identify expense debit line (debit to expense account or category)
-    const expenseDebitLine = lines.find(l => {
-      if (l.line_type !== 'debit') return false;
-      if (l.category_id) {
-        const cat = categories.find(c => c.id === l.category_id);
-        return cat?.type === 'expense';
-      }
-      return l.account_id === defaultExpenseAccUuid;
-    }) || lines.find(l => l.line_type === 'debit');
+    // 3. Identify debit line (debit to expense account, category, or savings head)
+    const debitLine = lines.find(l => l.line_type === 'debit');
+    const debitAcc = debitLine?.account_id ? accounts.find(a => a.id === debitLine.account_id) : undefined;
+    const isSavingHeadDebit = debitAcc && ['savings_dps', 'investment'].includes(debitAcc.account_type_id);
 
     // 4. Resolve category
-    const linkedCatId = expenseDebitLine?.category_id || creditLine?.category_id || lines.find(l => l.category_id)?.category_id;
+    const linkedCatId = debitLine?.category_id || creditLine?.category_id || lines.find(l => l.category_id)?.category_id;
     const cat = linkedCatId ? categories.find(c => c.id === linkedCatId) : undefined;
 
     // Double check: if linked category is income, exclude
     if (cat && cat.type === 'income') return;
 
-    const catName = cat?.name || 'Uncategorized Expense';
-    const catId = cat?.id || 'uncategorized';
-    const catColor = cat?.color || '#ef4444';
-    const amount = expenseDebitLine?.amount || creditLine?.amount || lines[0]?.amount || 0;
-    const memo = expenseDebitLine?.memo || entry.memo || 'Expense';
-    const counterparty = expenseDebitLine?.counterparty || creditLine?.counterparty || lines.find(l => l.counterparty)?.counterparty;
+    const isSavingAllocation = cat?.type === 'saving' || cat?.accounting_classification === 'asset_savings' || Boolean(isSavingHeadDebit);
+    const targetSavingsHeadName = isSavingHeadDebit 
+      ? debitAcc?.name 
+      : (cat?.target_savings_account_id ? accounts.find(a => a.id === cat.target_savings_account_id)?.name : undefined);
+
+    const catName = cat?.name || (isSavingAllocation ? (targetSavingsHeadName || 'Saving Allocation') : 'Uncategorized Expense');
+    const catId = cat?.id || (isSavingAllocation ? 'saving_head' : 'uncategorized');
+    const catColor = cat?.color || (isSavingAllocation ? '#0d9488' : '#ef4444');
+    const amount = debitLine?.amount || creditLine?.amount || lines[0]?.amount || 0;
+    const memo = debitLine?.memo || entry.memo || 'Expense';
+    const counterparty = debitLine?.counterparty || creditLine?.counterparty || lines.find(l => l.counterparty)?.counterparty;
 
     if (!categoryTotals[catId]) {
       categoryTotals[catId] = {
@@ -147,7 +151,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
     categoryTotals[catId].count += 1;
 
     expenseRows.push({
-      id: expenseDebitLine?.id || entry.id,
+      id: debitLine?.id || entry.id,
       entryId: entry.id,
       date: entry.entry_date,
       memo,
@@ -157,13 +161,19 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
       channelName: payerAcc?.name || 'Cash / Card',
       channelType: payerAcc?.account_type_id || 'cash',
       counterparty,
+      isSavingAllocation,
+      targetSavingsHeadName,
     });
   });
 
   const totalExpense = expenseRows.reduce((sum, r) => sum + r.amount, 0);
+  const totalOperating = expenseRows.filter(r => !r.isSavingAllocation).reduce((sum, r) => sum + r.amount, 0);
+  const totalSavingsAllocated = expenseRows.filter(r => r.isSavingAllocation).reduce((sum, r) => sum + r.amount, 0);
 
   // Filtered rows
   const filteredRows = expenseRows.filter(row => {
+    if (outflowFilter === 'operating' && row.isSavingAllocation) return false;
+    if (outflowFilter === 'savings' && !row.isSavingAllocation) return false;
     if (selectedCategory !== 'all' && row.categoryId !== selectedCategory) return false;
     if (selectedChannel !== 'all') {
       if (selectedChannel === 'cash' && row.channelType !== 'cash') return false;
@@ -263,14 +273,19 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs">
           <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 block mb-1">
-            Total Expense Outflow
+            Total Outflows
           </span>
           <div className="text-2xl font-bold font-mono text-rose-600 dark:text-rose-400 tabular-nums">
             {formatMoney(totalExpense)}
           </div>
-          <p className="text-2xs text-slate-500 dark:text-slate-400 mt-1.5">
-            {expenseRows.length} transactions recorded
-          </p>
+          <div className="text-2xs text-slate-500 dark:text-slate-400 mt-1.5 flex flex-col gap-0.5">
+            <span className="text-slate-600 dark:text-slate-300">
+              Expenses: <strong className="font-mono">{formatMoney(totalOperating)}</strong>
+            </span>
+            <span className="text-teal-600 dark:text-teal-400">
+              Saved to Heads: <strong className="font-mono">{formatMoney(totalSavingsAllocated)}</strong>
+            </span>
+          </div>
         </div>
 
         <div className="p-5 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs">
@@ -388,6 +403,34 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
           </select>
         </div>
 
+        {/* Outflow Type Filter (All, Operating Expenses, Savings Allocations) */}
+        <div className="flex items-center gap-1 p-0.5 bg-slate-100 dark:bg-slate-800 rounded-lg text-xs">
+          <button
+            onClick={() => setOutflowFilter('all')}
+            className={`px-2.5 py-1 rounded-md transition-all ${
+              outflowFilter === 'all' ? 'bg-white dark:bg-slate-700 font-semibold shadow-xs text-slate-900 dark:text-white' : 'text-slate-500'
+            }`}
+          >
+            All Outflows ({expenseRows.length})
+          </button>
+          <button
+            onClick={() => setOutflowFilter('operating')}
+            className={`px-2.5 py-1 rounded-md transition-all ${
+              outflowFilter === 'operating' ? 'bg-white dark:bg-slate-700 font-semibold shadow-xs text-rose-600 dark:text-rose-400' : 'text-slate-500'
+            }`}
+          >
+            Operating
+          </button>
+          <button
+            onClick={() => setOutflowFilter('savings')}
+            className={`px-2.5 py-1 rounded-md transition-all ${
+              outflowFilter === 'savings' ? 'bg-white dark:bg-slate-700 font-semibold shadow-xs text-teal-600 dark:text-teal-400' : 'text-slate-500'
+            }`}
+          >
+            Savings Heads
+          </button>
+        </div>
+
         {/* Date Filter Tabs */}
         <div className="flex items-center gap-1 p-0.5 bg-slate-100 dark:bg-slate-800 rounded-lg text-xs">
           <button
@@ -424,7 +467,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
             <thead>
               <tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950/50 text-2xs uppercase tracking-wider text-slate-500 font-semibold">
                 <th className="py-3 px-4">Date</th>
-                <th className="py-3 px-4">Category</th>
+                <th className="py-3 px-4">Category / Head</th>
                 <th className="py-3 px-4">Description / Memo</th>
                 <th className="py-3 px-4">Paid Via</th>
                 <th className="py-3 px-4 text-right">Amount ({currentWorkspace?.currency || 'BDT'})</th>
@@ -454,9 +497,21 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
                         </div>
                       </td>
                       <td className="py-3 px-4 whitespace-nowrap">
-                        <span className="px-2 py-0.5 rounded-full text-2xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
-                          {row.categoryName}
-                        </span>
+                        <div className="flex flex-col gap-0.5">
+                          <span className={`px-2 py-0.5 rounded-full text-2xs font-semibold w-fit ${
+                            row.isSavingAllocation
+                              ? 'bg-teal-50 dark:bg-teal-950 text-teal-700 dark:text-teal-300 border border-teal-200 dark:border-teal-800'
+                              : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300'
+                          }`}>
+                            {row.categoryName}
+                          </span>
+                          {row.isSavingAllocation && (
+                            <span className="text-3xs text-teal-600 dark:text-teal-400 font-medium flex items-center gap-1">
+                              <PiggyBank className="w-2.5 h-2.5" />
+                              <span>Added to: {row.targetSavingsHeadName || 'Savings Head'}</span>
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="py-3 px-4 text-slate-900 dark:text-slate-100 font-medium">
                         {row.memo}
@@ -476,8 +531,13 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
                           <span>{row.channelName}</span>
                         </div>
                       </td>
-                      <td className="py-3 px-4 text-right font-mono font-bold text-rose-600 dark:text-rose-400 whitespace-nowrap tabular-nums">
+                      <td className={`py-3 px-4 text-right font-mono font-bold whitespace-nowrap tabular-nums ${
+                        row.isSavingAllocation ? 'text-teal-600 dark:text-teal-400' : 'text-rose-600 dark:text-rose-400'
+                      }`}>
                         -{formatMoney(row.amount)}
+                        {row.isSavingAllocation && (
+                          <span className="text-3xs font-sans font-normal text-teal-500 block">Saved in Head</span>
+                        )}
                       </td>
                       <td className="py-3 px-4 text-center whitespace-nowrap">
                         <div className="flex items-center justify-center gap-1.5">

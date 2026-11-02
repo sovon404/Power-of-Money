@@ -1,18 +1,18 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { X, ArrowRightLeft, ArrowDownRight, ArrowUpRight, Scale, AlertCircle, History, Trash2 } from 'lucide-react';
+import { X, ArrowRightLeft, ArrowDownRight, ArrowUpRight, Scale, AlertCircle, History, Trash2, PiggyBank } from 'lucide-react';
 import { useWorkspace } from '../../context/WorkspaceContext';
 import { db } from '../../services/db';
 import { JournalEntry, Category, FinancialAccount } from '../../types';
 import { EditableSelect } from '../common/EditableSelect';
 import { NumericInput } from '../common/NumericInput';
-import { toUuid } from '../../lib/uuid';
+import { toUuid, generateUuid } from '../../lib/uuid';
 
 interface NewTransactionModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSuccess?: () => void;
   entryToEdit?: JournalEntry | null;
-  defaultMode?: 'expense' | 'income' | 'transfer';
+  defaultMode?: 'expense' | 'income' | 'transfer' | 'saving';
 }
 
 export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
@@ -26,14 +26,16 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
   const workspaceId = currentWorkspace?.id || '';
 
   const accounts = useMemo(() => db.getAccounts(workspaceId).filter(a => !a.is_archived), [workspaceId]);
+  const savingsAccounts = useMemo(() => accounts.filter(a => ['savings_dps', 'investment'].includes(a.account_type_id)), [accounts]);
   const categories = useMemo(() => db.getCategories(workspaceId), [workspaceId]);
 
-  const [mode, setMode] = useState<'expense' | 'income' | 'transfer'>(defaultMode || 'expense');
+  const [mode, setMode] = useState<'expense' | 'income' | 'transfer' | 'saving'>(defaultMode || 'expense');
   const [date, setDate] = useState<string>(new Date().toISOString().split('T')[0]);
   const [amount, setAmount] = useState<string>('');
   const [memo, setMemo] = useState<string>('');
   const [sourceAccountId, setSourceAccountId] = useState<string>('');
   const [destinationAccountId, setDestinationAccountId] = useState<string>('');
+  const [targetSavingsAccountId, setTargetSavingsAccountId] = useState<string>('');
   const [categoryId, setCategoryId] = useState<string>('');
   const [counterparty, setCounterparty] = useState<string>('');
   const [isHistorical, setIsHistorical] = useState<boolean>(false);
@@ -64,7 +66,14 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
         setCategoryId(linkedCatId);
       }
 
-      if (entryToEdit.source_type === 'transfer') {
+      const debitAcc = accounts.find(a => a.id === debitLine?.account_id);
+      const isSavingDebit = debitAcc && ['savings_dps', 'investment'].includes(debitAcc.account_type_id);
+
+      if (isSavingDebit) {
+        setMode('saving');
+        setSourceAccountId(creditLine?.account_id || '');
+        setTargetSavingsAccountId(debitLine?.account_id || '');
+      } else if (entryToEdit.source_type === 'transfer') {
         setMode('transfer');
         setSourceAccountId(creditLine?.account_id || '');
         setDestinationAccountId(debitLine?.account_id || '');
@@ -73,6 +82,10 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
         if (cat?.type === 'income') {
           setMode('income');
           setDestinationAccountId(debitLine?.account_id || '');
+        } else if (cat?.type === 'saving') {
+          setMode('saving');
+          setSourceAccountId(creditLine?.account_id || '');
+          setTargetSavingsAccountId(debitLine?.account_id || cat.target_savings_account_id || '');
         } else {
           setMode('expense');
           setSourceAccountId(creditLine?.account_id || debitLine?.account_id || '');
@@ -91,6 +104,7 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
 
       const currentAccounts = db.getAccounts(workspaceId).filter(a => !a.is_archived);
       const currentCategories = db.getCategories(workspaceId);
+      const curSavingsAccounts = currentAccounts.filter(a => ['savings_dps', 'investment'].includes(a.account_type_id));
 
       if (currentAccounts.length > 0) {
         setSourceAccountId(currentAccounts[0].id);
@@ -98,27 +112,59 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
       if (currentAccounts.length > 1) {
         setDestinationAccountId(currentAccounts[1].id);
       }
-      const expenseCats = currentCategories.filter(c => c.type === 'expense');
-      if (expenseCats.length > 0) {
-        setCategoryId(expenseCats[0].id);
+      if (curSavingsAccounts.length > 0) {
+        setTargetSavingsAccountId(curSavingsAccounts[0].id);
+      }
+
+      if (defaultMode === 'saving') {
+        const savingCat = currentCategories.find(c => c.type === 'saving');
+        if (savingCat) {
+          setCategoryId(savingCat.id);
+          if (savingCat.target_savings_account_id) {
+            setTargetSavingsAccountId(savingCat.target_savings_account_id);
+          }
+        }
+      } else if (defaultMode === 'income') {
+        const incomeCat = currentCategories.find(c => c.type === 'income');
+        if (incomeCat) setCategoryId(incomeCat.id);
+      } else {
+        const expenseCats = currentCategories.filter(c => c.type === 'expense');
+        if (expenseCats.length > 0) {
+          setCategoryId(expenseCats[0].id);
+        }
       }
     }
   }, [isOpen, entryToEdit?.id, defaultMode]);
+
+  // When selected category changes, check if it has a linked savings head
+  const handleSelectCategory = (newCatId: string) => {
+    setCategoryId(newCatId);
+    const cat = categories.find(c => c.id === newCatId);
+    if (cat?.type === 'saving' || cat?.accounting_classification === 'asset_savings') {
+      if (cat.target_savings_account_id) {
+        setTargetSavingsAccountId(cat.target_savings_account_id);
+      } else if (!targetSavingsAccountId && savingsAccounts.length > 0) {
+        setTargetSavingsAccountId(savingsAccounts[0].id);
+      }
+    }
+  };
 
   if (!isOpen) return null;
 
   // Inline Category Add / Edit handlers
   const handleAddNewCategory = (name: string): string => {
     const newCatId = toUuid(`cat_${workspaceId}_${Date.now()}`);
+    const isSaving = mode === 'saving';
     const newCat: Category = {
       id: newCatId,
       workspace_id: workspaceId,
       name,
-      type: mode === 'income' ? 'income' : 'expense',
+      type: mode === 'income' ? 'income' : isSaving ? 'saving' : 'expense',
       income_type: mode === 'income' ? 'other' : undefined,
-      accounting_classification: mode === 'income' ? 'income_operating' : 'expense_operating',
-      icon: mode === 'income' ? 'plus-circle' : 'tag',
-      color: mode === 'income' ? '#10b981' : '#f97316',
+      accounting_classification: mode === 'income' ? 'income_operating' : isSaving ? 'asset_savings' : 'expense_operating',
+      target_savings_account_id: isSaving ? targetSavingsAccountId : undefined,
+      icon: mode === 'income' ? 'plus-circle' : isSaving ? 'piggy-bank' : 'tag',
+      color: mode === 'income' ? '#10b981' : isSaving ? '#0d9488' : '#f97316',
       is_seed: false,
       is_archived: false,
       sort_order: categories.length + 1,
@@ -168,6 +214,38 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
     }
   };
 
+  // Inline Savings Head Add / Edit handlers
+  const handleAddNewSavingsHead = (name: string): string => {
+    const newAccId = generateUuid();
+    const newAcc: FinancialAccount = {
+      id: newAccId,
+      workspace_id: workspaceId,
+      name,
+      account_type_id: 'savings_dps',
+      provider: 'Dedicated Fund',
+      currency: currentWorkspace?.currency || 'BDT',
+      opening_balance: 0,
+      opening_date: new Date().toISOString().split('T')[0],
+      current_balance_cached: 0,
+      is_archived: false,
+      icon: 'piggy-bank',
+      color: '#0d9488',
+      created_at: new Date().toISOString(),
+    };
+    db.saveAccount(newAcc);
+    refreshData();
+    setTargetSavingsAccountId(newAccId);
+    return newAccId;
+  };
+
+  const handleEditSavingsHead = (accId: string, updatedName: string) => {
+    const acc = accounts.find(a => a.id === accId);
+    if (acc) {
+      db.saveAccount({ ...acc, name: updatedName });
+      refreshData();
+    }
+  };
+
   const handleDeleteEntry = () => {
     if (!entryToEdit) return;
     if (window.confirm('Are you sure you want to delete this transaction from the database? Linked account balances will be restored.')) {
@@ -199,8 +277,85 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
 
     const memoText = memo.trim();
     const selectedCat = categories.find(c => c.id === categoryId);
+    const isSavingAllocation = mode === 'saving' || selectedCat?.type === 'saving' || selectedCat?.accounting_classification === 'asset_savings';
 
-    if (mode === 'expense') {
+    if (isSavingAllocation) {
+      if (!sourceAccountId) {
+        setErrorMsg('Please select a payment account.');
+        return;
+      }
+      if (!targetSavingsAccountId) {
+        setErrorMsg('Please select a Target Savings Head / Reserved Fund.');
+        return;
+      }
+      if (sourceAccountId === targetSavingsAccountId) {
+        setErrorMsg('Source payment account and Target Savings Head must be different.');
+        return;
+      }
+
+      const lines = [
+        {
+          account_id: sourceAccountId,
+          line_type: 'credit' as const,
+          amount: numAmount,
+          memo: memoText,
+          category_id: categoryId || undefined,
+          counterparty: counterparty.trim() || undefined,
+        },
+        {
+          account_id: targetSavingsAccountId,
+          line_type: 'debit' as const,
+          amount: numAmount,
+          memo: `Savings Allocation (${selectedCat?.name || 'Dedicated Fund'}): ${memoText}`,
+          category_id: categoryId || undefined,
+          counterparty: counterparty.trim() || undefined,
+        },
+      ];
+
+      if (entryToEdit) {
+        const res = db.updateJournalEntry(workspaceId, entryToEdit.id, {
+          memo: memoText,
+          entry_date: date,
+          is_historical: isHistorical,
+          historical_note: historicalNote.trim() || undefined,
+          lines,
+        });
+        if (!res.success) {
+          setErrorMsg(res.error || 'Failed to update transaction.');
+          return;
+        }
+      } else {
+        const res = db.postJournalEntry(workspaceId, {
+          memo: memoText,
+          source_type: 'manual',
+          source_id: targetSavingsAccountId,
+          entry_date: date,
+          is_historical: isHistorical,
+          historical_note: historicalNote.trim() || undefined,
+          lines,
+        });
+        if (!res.success) {
+          setErrorMsg(res.error || 'Failed to post transaction.');
+          return;
+        }
+      }
+
+      // Update matching savings goals if any
+      const goals = db.getSavingsGoals(workspaceId);
+      const targetHeadAcc = accounts.find(a => a.id === targetSavingsAccountId);
+      const matchedGoal = goals.find(g => 
+        g.account_id === targetSavingsAccountId ||
+        (targetHeadAcc && g.name.toLowerCase() === targetHeadAcc.name.toLowerCase()) ||
+        (selectedCat && g.name.toLowerCase() === selectedCat.name.toLowerCase())
+      );
+      if (matchedGoal) {
+        matchedGoal.current_saved_amount = (Number(matchedGoal.current_saved_amount) || 0) + numAmount;
+        if (matchedGoal.current_saved_amount >= matchedGoal.target_amount) {
+          matchedGoal.status = 'completed';
+        }
+        db.saveSavingsGoal(matchedGoal);
+      }
+    } else if (mode === 'expense') {
       if (!sourceAccountId) {
         setErrorMsg('Please select a payment account.');
         return;
@@ -362,9 +517,12 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
   };
 
   // Convert categories to SelectOptions
+  // Convert categories to SelectOptions
   const activeCategories = mode === 'income' 
     ? categories.filter(c => c.type === 'income')
-    : categories.filter(c => c.type === 'expense' || c.type === 'transfer_allocation');
+    : mode === 'saving'
+    ? categories.filter(c => c.type === 'saving' || c.accounting_classification === 'asset_savings')
+    : categories.filter(c => c.type !== 'income');
 
   const incomeTypes = db.getIncomeTypes(workspaceId);
   const incomeTypeMap = new Map(incomeTypes.map(t => [t.id, t.name]));
@@ -372,7 +530,11 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
   const categoryOptions = activeCategories.map(c => {
     let sub: string = c.type;
     if (c.type === 'income') {
-      sub = (c.income_type && incomeTypeMap.get(c.income_type)) || (c.income_type ? c.income_type.replace('_', ' ') : 'General');
+      sub = (c.income_type && incomeTypeMap.get(c.income_type)) || (c.income_type ? c.income_type.replace('_', ' ') : 'Income');
+    } else if (c.type === 'saving' || c.accounting_classification === 'asset_savings') {
+      sub = 'Saving / Reserved Fund';
+    } else {
+      sub = 'Expense';
     }
     return {
       value: c.id,
@@ -388,6 +550,17 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
     subLabel: formatMoney(a.current_balance_cached),
     color: a.color,
   }));
+
+  const savingsAccountOptions = savingsAccounts.map(a => ({
+    value: a.id,
+    label: a.name,
+    subLabel: formatMoney(a.current_balance_cached),
+    color: a.color || '#0d9488',
+  }));
+
+  const selectedCat = categories.find(c => c.id === categoryId);
+  const sourceAcc = accounts.find(a => a.id === sourceAccountId);
+  const targetSavingsAcc = accounts.find(a => a.id === targetSavingsAccountId);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 overflow-y-auto">
@@ -410,8 +583,8 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
           </button>
         </div>
 
-        {/* Mode Selector Tabs */}
-        <div className="grid grid-cols-3 gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl my-4 text-xs font-semibold">
+        {/* Mode Selector Tabs (4 Modes: Expense, Income, Saving Allocation, Transfer) */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl my-4 text-xs font-semibold">
           <button
             type="button"
             onClick={() => setMode('expense')}
@@ -435,6 +608,27 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
           >
             <ArrowUpRight className="w-4 h-4" />
             <span>Income</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setMode('saving');
+              const savingCat = categories.find(c => c.type === 'saving');
+              if (savingCat) {
+                setCategoryId(savingCat.id);
+                if (savingCat.target_savings_account_id) {
+                  setTargetSavingsAccountId(savingCat.target_savings_account_id);
+                }
+              }
+            }}
+            className={`flex items-center justify-center gap-1.5 py-2 rounded-lg transition-colors ${
+              mode === 'saving'
+                ? 'bg-white dark:bg-slate-700 text-teal-600 dark:text-teal-400 shadow-xs'
+                : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
+            }`}
+          >
+            <PiggyBank className="w-4 h-4" />
+            <span>Saving</span>
           </button>
           <button
             type="button"
@@ -494,27 +688,105 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
 
           {/* Accounts & Category with Inline Add & Edit Dropdowns */}
           {mode === 'expense' && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <EditableSelect
-                label="Paid From (Account)"
-                options={accountOptions}
-                value={sourceAccountId}
-                onChange={setSourceAccountId}
-                onAddNew={handleAddNewAccount}
-                onEditSelected={handleEditAccount}
-                placeholder="Choose account"
-                required
-              />
-              <EditableSelect
-                label="Category"
-                options={categoryOptions}
-                value={categoryId}
-                onChange={setCategoryId}
-                onAddNew={handleAddNewCategory}
-                onEditSelected={handleEditCategory}
-                placeholder="Choose category"
-                required
-              />
+            <div className="space-y-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <EditableSelect
+                  label="Paid From (Account)"
+                  options={accountOptions}
+                  value={sourceAccountId}
+                  onChange={setSourceAccountId}
+                  onAddNew={handleAddNewAccount}
+                  onEditSelected={handleEditAccount}
+                  placeholder="Choose account"
+                  required
+                />
+                <EditableSelect
+                  label="Category"
+                  options={categoryOptions}
+                  value={categoryId}
+                  onChange={handleSelectCategory}
+                  onAddNew={handleAddNewCategory}
+                  onEditSelected={handleEditCategory}
+                  placeholder="Choose category"
+                  required
+                />
+              </div>
+
+              {/* Dynamic Target Savings Head Selection if Expense category is a Saving Head */}
+              {(selectedCat?.type === 'saving' || selectedCat?.accounting_classification === 'asset_savings') && (
+                <div className="p-3.5 rounded-xl bg-teal-50/80 dark:bg-teal-950/40 border border-teal-200 dark:border-teal-800/80 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-teal-800 dark:text-teal-300 flex items-center gap-1.5">
+                      <PiggyBank className="w-4 h-4 text-teal-600 dark:text-teal-400" />
+                      <span>Target Savings Head / Reserved Fund</span>
+                    </label>
+                  </div>
+                  <EditableSelect
+                    options={savingsAccountOptions}
+                    value={targetSavingsAccountId}
+                    onChange={setTargetSavingsAccountId}
+                    onAddNew={handleAddNewSavingsHead}
+                    onEditSelected={handleEditSavingsHead}
+                    placeholder="Select target savings head (e.g. DSPF, Unity Fund)"
+                    addNewTitle="New Savings Head"
+                    editTitle="Edit Head Name"
+                    required
+                  />
+                  <p className="text-3xs text-teal-700 dark:text-teal-300 leading-relaxed">
+                    ✨ <strong>Saving Head Detected:</strong> This will deduct {amount ? formatMoney(parseFloat(amount) || 0) : 'funds'} from {sourceAcc?.name || 'paying account'} and deposit directly into your <strong>{targetSavingsAcc?.name || 'Dedicated Savings Head'}</strong>, increasing your real-time savings balance in the Accounts Cockpit.
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {mode === 'saving' && (
+            <div className="space-y-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <EditableSelect
+                  label="Paid From (Liquid Account / Wallet)"
+                  options={accountOptions}
+                  value={sourceAccountId}
+                  onChange={setSourceAccountId}
+                  onAddNew={handleAddNewAccount}
+                  onEditSelected={handleEditAccount}
+                  placeholder="Choose paying account"
+                  required
+                />
+                <EditableSelect
+                  label="Saving Category"
+                  options={categoryOptions}
+                  value={categoryId}
+                  onChange={handleSelectCategory}
+                  onAddNew={handleAddNewCategory}
+                  onEditSelected={handleEditCategory}
+                  placeholder="Choose category"
+                  required
+                />
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-teal-50/80 dark:bg-teal-950/40 border border-teal-200 dark:border-teal-800/80 space-y-2">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-teal-800 dark:text-teal-300 flex items-center gap-1.5">
+                    <PiggyBank className="w-4 h-4 text-teal-600 dark:text-teal-400" />
+                    <span>Target Savings Head / Reserved Fund</span>
+                  </label>
+                </div>
+                <EditableSelect
+                  options={savingsAccountOptions}
+                  value={targetSavingsAccountId}
+                  onChange={setTargetSavingsAccountId}
+                  onAddNew={handleAddNewSavingsHead}
+                  onEditSelected={handleEditSavingsHead}
+                  placeholder="Select target savings head (e.g. DSPF, Unity Fund)"
+                  addNewTitle="New Savings Head"
+                  editTitle="Edit Head Name"
+                  required
+                />
+                <p className="text-3xs text-teal-700 dark:text-teal-300 leading-relaxed">
+                  ✨ <strong>Dedicated Savings Flow:</strong> Deducts from {sourceAcc?.name || 'Liquid Wallet'} and adds directly into your <strong>{targetSavingsAcc?.name || 'Savings Head'}</strong> without distorting operational burn expenses.
+                </p>
+              </div>
             </div>
           )}
 

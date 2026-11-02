@@ -494,7 +494,21 @@ export const AccountsLiveCockpit: React.FC<AccountsLiveCockpitProps> = ({
                 <span className="text-2xs font-semibold truncate text-slate-700 dark:text-slate-300 group-hover:text-teal-600 dark:group-hover:text-teal-400 transition-colors">
                   {acc.name}
                 </span>
-                {getHeadIcon(acc)}
+                <div className="flex items-center gap-1.5">
+                  {canWrite && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleOpenEditModal();
+                      }}
+                      title="Edit Head & Balance"
+                      className="p-1 rounded hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-400 hover:text-teal-600 dark:hover:text-teal-400 opacity-60 group-hover:opacity-100 transition-opacity"
+                    >
+                      <Edit3 className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                  {getHeadIcon(acc)}
+                </div>
               </div>
               <div>
                 <div className="text-xl font-bold font-mono text-slate-900 dark:text-white tabular-nums">
