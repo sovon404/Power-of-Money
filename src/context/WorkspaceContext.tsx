@@ -1,6 +1,8 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { Workspace, WorkspaceRole, AuthUser } from '../types';
 import { db } from '../services/db';
+import { supabaseSync } from '../services/supabaseSync';
+import { isSupabaseConfigured } from '../lib/supabase';
 
 interface WorkspaceContextType {
   currentUser: AuthUser;
@@ -42,7 +44,6 @@ export const WorkspaceProvider: React.FC<WorkspaceProviderProps> = ({ children, 
     if (!currentWorkspace) return;
     setIsSyncingWithDb(true);
     try {
-      const { supabaseSync } = await import('../services/supabaseSync');
       const remote = await supabaseSync.pullRemoteWorkspaceData(currentWorkspace.id);
       if (remote) {
         db.hydrateFromSupabase(remote, currentWorkspace.id);
@@ -62,8 +63,6 @@ export const WorkspaceProvider: React.FC<WorkspaceProviderProps> = ({ children, 
     const setupSingleUserVault = async () => {
       setIsSyncingWithDb(true);
       try {
-        const { supabase, isSupabaseConfigured } = await import('../lib/supabase');
-        const { supabaseSync } = await import('../services/supabaseSync');
 
         // 1. Sync Profile
         await supabaseSync.syncProfile(authUser.id, authUser.email || '', authUser.name || '');

@@ -1016,7 +1016,7 @@ class DatabaseEngine {
     return this.getCategories(workspaceId).filter(c => c.parent_id === parentId);
   }
 
-  saveCategory(cat: Category): void {
+  async saveCategory(cat: Category): Promise<{ success: boolean; id?: string; error?: string }> {
     const list = this.get<Category[]>(STORAGE_KEYS.CATEGORIES, []);
     const idx = list.findIndex(c => c.id === cat.id);
     if (idx >= 0) {
@@ -1032,10 +1032,10 @@ class DatabaseEngine {
       this.set(STORAGE_KEYS.DELETED_CATEGORIES, updatedDeleted);
     }
     this.set(STORAGE_KEYS.CATEGORIES, list);
-    supabaseSync.syncCategory(cat, cat.workspace_id);
+    return await supabaseSync.syncCategory(cat, cat.workspace_id);
   }
 
-  deleteCategory(categoryId: string, workspaceId: string): void {
+  async deleteCategory(categoryId: string, workspaceId: string): Promise<{ success: boolean; error?: string }> {
     const list = this.get<Category[]>(STORAGE_KEYS.CATEGORIES, []);
     const cat = list.find(c => c.id === categoryId);
     if (cat) {
@@ -1057,7 +1057,7 @@ class DatabaseEngine {
     // Also remove any subcategories belonging to this category
     const remaining = list.filter(c => c.id !== categoryId && c.parent_id !== categoryId);
     this.set(STORAGE_KEYS.CATEGORIES, remaining);
-    supabaseSync.deleteCategory(categoryId, workspaceId, cat?.name);
+    return await supabaseSync.deleteCategory(categoryId, workspaceId, cat?.name);
   }
 
   remapCategoryId(oldId: string, newId: string, workspaceId: string): void {

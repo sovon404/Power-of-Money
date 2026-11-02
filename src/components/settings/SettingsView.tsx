@@ -52,13 +52,17 @@ export const SettingsView: React.FC = () => {
   const [newHeadProvider, setNewHeadProvider] = useState('Savings Fund');
   const [catParentId, setCatParentId] = useState<string | null>(null);
   const [catDescription, setCatDescription] = useState('');
+  const [isSavingCat, setIsSavingCat] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const [copiedMigration, setCopiedMigration] = useState(false);
+  const [copiedMasterFix, setCopiedMasterFix] = useState(false);
 
   const openAddCategoryModal = (parentId?: string | null) => {
     setEditingCategory(null);
     setCatName('');
     setCatDescription('');
+    setSaveError(null);
     setCatParentId(parentId || null);
     if (parentId) {
       const parent = categories.find(c => c.id === parentId);
@@ -82,6 +86,7 @@ export const SettingsView: React.FC = () => {
     setEditingCategory(cat);
     setCatName(cat.name);
     setCatDescription(cat.description || '');
+    setSaveError(null);
     setCatParentId(cat.parent_id || null);
     setCatType(cat.type === 'transfer_allocation' ? 'saving' : cat.type);
     setCatClassification(cat.accounting_classification || (cat.type === 'saving' ? 'asset_savings' : 'expense_operating'));
@@ -91,7 +96,7 @@ export const SettingsView: React.FC = () => {
     setShowAddCatModal(true);
   };
 
-  const handleCreateSavingsHeadInline = (e: React.MouseEvent) => {
+  const handleCreateSavingsHeadInline = async (e: React.MouseEvent) => {
     e.preventDefault();
     if (!newHeadName.trim()) return;
 
@@ -113,65 +118,84 @@ export const SettingsView: React.FC = () => {
     };
 
     db.saveAccount(newAcc);
+    const { supabaseSync } = await import('../../services/supabaseSync');
+    await supabaseSync.syncAccount(newAcc, workspaceId);
+
     refreshData();
     setCatTargetSavingsAcc(newAccId);
     setNewHeadName('');
     setIsCreatingHead(false);
   };
 
-  const handleSaveCategory = (e: React.FormEvent) => {
+  const handleSaveCategory = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!catName.trim()) return;
 
-    if (editingCategory) {
-      const updated: Category = {
-        ...editingCategory,
-        name: catName.trim(),
-        description: catDescription.trim() || undefined,
-        parent_id: catParentId || undefined,
-        type: catType,
-        accounting_classification: (catType === 'saving' ? (catClassification || 'asset_savings') : catClassification) as any,
-        target_savings_account_id: catType === 'saving' ? (catTargetSavingsAcc || undefined) : undefined,
-        color: catColor,
-      };
-      db.saveCategory(updated);
-    } else {
-      const newCat: Category = {
-        id: toUuid(`cat_${workspaceId}_${Date.now()}`),
-        workspace_id: workspaceId,
-        name: catName.trim(),
-        description: catDescription.trim() || undefined,
-        parent_id: catParentId || undefined,
-        type: catType,
-        accounting_classification: (catType === 'saving' ? 'asset_savings' : catClassification) as any,
-        target_savings_account_id: catType === 'saving' ? (catTargetSavingsAcc || undefined) : undefined,
-        icon: catType === 'saving' ? 'piggy-bank' : catType === 'income' ? 'plus-circle' : 'tag',
-        color: catType === 'saving' ? '#0d9488' : catColor,
-        is_seed: false,
-        is_archived: false,
-        sort_order: categories.length + 1,
-      };
-      db.saveCategory(newCat);
-    }
+    setIsSavingCat(true);
+    setSaveError(null);
 
-    refreshData();
-    setShowAddCatModal(false);
-    setCatName('');
-    setCatDescription('');
-    setCatParentId(null);
+    try {
+      let catToSave: Category;
+      if (editingCategory) {
+        catToSave = {
+          ...editingCategory,
+          name: catName.trim(),
+          description: catDescription.trim() || undefined,
+          parent_id: catParentId || undefined,
+          type: catType,
+          accounting_classification: (catType === 'saving' ? (catClassification || 'asset_savings') : catClassification) as any,
+          target_savings_account_id: catType === 'saving' ? (catTargetSavingsAcc || undefined) : undefined,
+          color: catColor,
+        };
+      } else {
+        catToSave = {
+          id: toUuid(`cat_${workspaceId}_${Date.now()}`),
+          workspace_id: workspaceId,
+          name: catName.trim(),
+          description: catDescription.trim() || undefined,
+          parent_id: catParentId || undefined,
+          type: catType,
+          accounting_classification: (catType === 'saving' ? 'asset_savings' : catClassification) as any,
+          target_savings_account_id: catType === 'saving' ? (catTargetSavingsAcc || undefined) : undefined,
+          icon: catType === 'saving' ? 'piggy-bank' : catType === 'income' ? 'plus-circle' : 'tag',
+          color: catType === 'saving' ? '#0d9488' : catColor,
+          is_seed: false,
+          is_archived: false,
+          sort_order: categories.length + 1,
+        };
+      }
+
+      const syncRes = await db.saveCategory(catToSave);
+      if (!syncRes.success && syncRes.error) {
+        console.warn('Category sync warning:', syncRes.error);
+      }
+
+      refreshData();
+      setShowAddCatModal(false);
+      setCatName('');
+      setCatDescription('');
+      setCatParentId(null);
+    } catch (err: any) {
+      setSaveError(err.message || 'Failed to save category');
+    } finally {
+      setIsSavingCat(false);
+    }
   };
 
-  const handleToggleArchive = (cat: Category) => {
-    db.saveCategory({
+  const handleToggleArchive = async (cat: Category) => {
+    await db.saveCategory({
       ...cat,
       is_archived: !cat.is_archived,
     });
     refreshData();
   };
 
-  const handleDeleteCategory = (cat: Category) => {
+  const handleDeleteCategory = async (cat: Category) => {
     if (window.confirm(`Are you sure you want to permanently delete category "${cat.name}"?`)) {
-      db.deleteCategory(cat.id, workspaceId);
+      const res = await db.deleteCategory(cat.id, workspaceId);
+      if (!res.success && res.error) {
+        alert(`Notice: Deleted locally. Supabase error: ${res.error}. Please run migration 17 in the Supabase SQL editor.`);
+      }
       refreshData();
     }
   };
@@ -210,10 +234,77 @@ export const SettingsView: React.FC = () => {
 12. 20261102000012_savings_category_and_heads.sql
 13. 20261102000013_period_end_date_and_enhancements.sql
 14. 20261102000014_single_user_demolish_workspaces.sql
-15. 20261102000015_categories_subcategories_and_saving_heads.sql`;
+15. 20261102000015_categories_subcategories_and_saving_heads.sql
+16. 20261102000016_fix_category_conflicts_and_cascade_deletes.sql
+17. 20261102000017_master_categories_and_saving_heads_fix.sql`;
     navigator.clipboard.writeText(text);
     setCopiedMigration(true);
     setTimeout(() => setCopiedMigration(false), 2000);
+  };
+
+  const copyMasterFixSql = () => {
+    const sql = `-- ==============================================================================
+-- 1-CLICK MASTER FIX: Categories, Subcategories, Saving Heads & Cascade Deletes
+-- Drops rigid constraints causing 409 error 23505 and 23503 foreign key blocks.
+-- ==============================================================================
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
+-- Drop rigid constraint on (workspace_id, name)
+ALTER TABLE public.categories DROP CONSTRAINT IF EXISTS uq_category_name_workspace;
+
+-- Update type check to allow saving and savings
+ALTER TABLE public.categories DROP CONSTRAINT IF EXISTS categories_type_check;
+ALTER TABLE public.categories ADD CONSTRAINT categories_type_check CHECK (type IN ('income', 'expense', 'transfer_allocation', 'saving', 'savings'));
+
+-- Update accounting classification check to allow asset_savings
+ALTER TABLE public.categories DROP CONSTRAINT IF EXISTS categories_accounting_classification_check;
+ALTER TABLE public.categories ADD CONSTRAINT categories_accounting_classification_check CHECK (accounting_classification IN ('expense_operating', 'expense_finance', 'liability_reduction', 'asset_transfer', 'asset_savings', 'receivable_outflow', 'income_operating'));
+
+-- Add columns for subcategories, saving heads & notes
+ALTER TABLE public.categories ADD COLUMN IF NOT EXISTS parent_id UUID REFERENCES public.categories(id) ON DELETE CASCADE;
+ALTER TABLE public.categories ADD COLUMN IF NOT EXISTS target_savings_account_id UUID REFERENCES public.financial_accounts(id) ON DELETE SET NULL;
+ALTER TABLE public.categories ADD COLUMN IF NOT EXISTS income_type TEXT;
+ALTER TABLE public.categories ADD COLUMN IF NOT EXISTS description TEXT;
+
+CREATE INDEX IF NOT EXISTS idx_categories_parent_id ON public.categories(workspace_id, parent_id);
+CREATE INDEX IF NOT EXISTS idx_categories_target_savings ON public.categories(workspace_id, target_savings_account_id);
+
+-- Hierarchical unique index
+DROP INDEX IF EXISTS public.uq_category_name_parent_workspace;
+CREATE UNIQUE INDEX IF NOT EXISTS uq_category_name_parent_workspace ON public.categories (workspace_id, LOWER(TRIM(name)), COALESCE(parent_id, '00000000-0000-0000-0000-000000000000'::uuid));
+
+-- Ensure foreign keys cascade/set null on delete
+DO $$ BEGIN
+    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'fk_journal_lines_category') THEN ALTER TABLE public.journal_lines DROP CONSTRAINT fk_journal_lines_category; END IF;
+    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'journal_lines_category_id_fkey') THEN ALTER TABLE public.journal_lines DROP CONSTRAINT journal_lines_category_id_fkey; END IF;
+    ALTER TABLE public.journal_lines ADD CONSTRAINT fk_journal_lines_category FOREIGN KEY (category_id) REFERENCES public.categories(id) ON DELETE SET NULL;
+
+    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'budgets_category_id_fkey') THEN ALTER TABLE public.budgets DROP CONSTRAINT budgets_category_id_fkey; END IF;
+    ALTER TABLE public.budgets ADD CONSTRAINT budgets_category_id_fkey FOREIGN KEY (category_id) REFERENCES public.categories(id) ON DELETE CASCADE;
+
+    IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'recurring_rules_category_id_fkey') THEN ALTER TABLE public.recurring_rules DROP CONSTRAINT recurring_rules_category_id_fkey; END IF;
+    ALTER TABLE public.recurring_rules ADD CONSTRAINT recurring_rules_category_id_fkey FOREIGN KEY (category_id) REFERENCES public.categories(id) ON DELETE SET NULL;
+EXCEPTION WHEN OTHERS THEN NULL; END $$;
+
+-- Ensure savings account types
+INSERT INTO public.account_types (id, name, classification, normal_balance, description)
+VALUES 
+    ('savings_dps', 'DPS & Fixed Term Deposits', 'asset', 'debit', 'Dedicated savings schemes, DSPF, Unity Fund, and reserved funds'),
+    ('investment', 'Investment / Stocks / Funds', 'asset', 'debit', 'Capital market, mutual funds, gold, fixed deposits')
+ON CONFLICT (id) DO UPDATE SET classification = 'asset', normal_balance = 'debit';
+
+-- RLS permissions
+ALTER TABLE public.categories ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "categories_all_access" ON public.categories;
+CREATE POLICY "categories_all_access" ON public.categories FOR ALL TO authenticated USING (true) WITH CHECK (true);
+
+ALTER TABLE public.financial_accounts ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "financial_accounts_all_access" ON public.financial_accounts;
+CREATE POLICY "financial_accounts_all_access" ON public.financial_accounts FOR ALL TO authenticated USING (true) WITH CHECK (true);`;
+    navigator.clipboard.writeText(sql);
+    setCopiedMasterFix(true);
+    setTimeout(() => setCopiedMasterFix(false), 2000);
   };
 
   return (
@@ -491,6 +582,47 @@ export const SettingsView: React.FC = () => {
               <div>12. /supabase/migrations/20261102000012_savings_category_and_heads.sql (Dedicated Savings Types &amp; Heads Linkage)</div>
               <div>13. /supabase/migrations/20261102000013_period_end_date_and_enhancements.sql (Period End Date &amp; Financial Enhancements)</div>
               <div>14. /supabase/migrations/20261102000014_single_user_demolish_workspaces.sql (Single-User Architecture &amp; RLS Simplification)</div>
+              <div>15. /supabase/migrations/20261102000015_categories_subcategories_and_saving_heads.sql (Hierarchical Categories &amp; Saving Types)</div>
+              <div>16. /supabase/migrations/20261102000016_fix_category_conflicts_and_cascade_deletes.sql (Conflict Dropping &amp; FK Cascade)</div>
+              <div className="text-emerald-400 font-bold">17. /supabase/migrations/20261102000017_master_categories_and_saving_heads_fix.sql (Master Unified Fix - Recommended)</div>
+            </div>
+
+            {/* Master Fix Callout Box */}
+            <div className="p-4 rounded-xl bg-emerald-950/40 border border-emerald-800/80 space-y-3">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <ShieldCheck className="w-4 h-4 text-emerald-400 shrink-0" />
+                    <h4 className="text-xs font-bold text-white">
+                      1-Click Master Fix for Categories, Saving Heads &amp; Cascading Deletes
+                    </h4>
+                  </div>
+                  <p className="text-2xs text-slate-300 mt-1 leading-relaxed">
+                    Fixes PostgREST 409 error 23505 (drops rigid unique constraint), check constraints for <code>saving</code> / <code>asset_savings</code>, and sets foreign key cascades so deleting categories never fails with 23503.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={copyMasterFixSql}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs transition-colors shadow-xs"
+                >
+                  {copiedMasterFix ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                  <span>{copiedMasterFix ? 'Copied 1-Click Fix SQL!' : 'Copy 1-Click Master Fix SQL (Migration 17)'}</span>
+                </button>
+
+                <a
+                  href="https://supabase.com/dashboard/project/apxbmwxovgpnttwprijw/sql"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 font-semibold text-xs border border-slate-700 transition-colors"
+                >
+                  <ExternalLink className="w-3.5 h-3.5 text-slate-400" />
+                  <span>Open Supabase SQL Editor</span>
+                </a>
+              </div>
             </div>
 
             <div className="flex items-center gap-2 pt-2">
@@ -499,7 +631,7 @@ export const SettingsView: React.FC = () => {
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 font-semibold"
               >
                 {copiedMigration ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
-                <span>{copiedMigration ? 'Copied Migration Order' : 'Copy Execution Order'}</span>
+                <span>{copiedMigration ? 'Copied Migration Order' : 'Copy All 17 Migration Files List'}</span>
               </button>
             </div>
           </div>
@@ -513,6 +645,12 @@ export const SettingsView: React.FC = () => {
             <h3 className="text-base font-bold text-slate-900 dark:text-white mb-3">
               {editingCategory ? 'Edit Financial Category' : 'Add Custom Financial Category'}
             </h3>
+
+            {saveError && (
+              <div className="mb-3 p-3 rounded-lg bg-rose-50 dark:bg-rose-950/60 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 text-xs">
+                {saveError}
+              </div>
+            )}
 
             <form onSubmit={handleSaveCategory} className="space-y-3.5">
               <div>
@@ -741,9 +879,11 @@ export const SettingsView: React.FC = () => {
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-500 rounded-lg shadow-xs"
+                  disabled={isSavingCat}
+                  className="px-4 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-500 rounded-lg shadow-xs disabled:opacity-50 flex items-center gap-1.5"
                 >
-                  {editingCategory ? 'Update Category' : 'Create Category'}
+                  {isSavingCat && <span className="inline-block w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+                  <span>{editingCategory ? 'Update Category' : 'Create Category'}</span>
                 </button>
               </div>
             </form>

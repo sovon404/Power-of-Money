@@ -130,7 +130,7 @@ export const SavingsGoalsView: React.FC = () => {
     setShowHeadModal(true);
   };
 
-  const handleCreateSavingsAccountInline = (e: React.MouseEvent) => {
+  const handleCreateSavingsAccountInline = async (e: React.MouseEvent) => {
     e.preventDefault();
     if (!newAccountName.trim()) return;
 
@@ -152,13 +152,16 @@ export const SavingsGoalsView: React.FC = () => {
     };
 
     db.saveAccount(newAcc);
+    const { supabaseSync } = await import('../../services/supabaseSync');
+    await supabaseSync.syncAccount(newAcc, workspaceId);
+
     refreshData();
     setHeadTargetAcc(newAccId);
     setNewAccountName('');
     setIsCreatingHeadAccount(false);
   };
 
-  const handleSaveSavingHead = (e: React.FormEvent) => {
+  const handleSaveSavingHead = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!headName.trim()) return;
 
@@ -173,7 +176,7 @@ export const SavingsGoalsView: React.FC = () => {
         target_savings_account_id: headTargetAcc || undefined,
         color: headColor,
       };
-      db.saveCategory(updated);
+      await db.saveCategory(updated);
     } else {
       const newCat: Category = {
         id: toUuid(`cat_saving_${workspaceId}_${Date.now()}`),
@@ -190,7 +193,7 @@ export const SavingsGoalsView: React.FC = () => {
         is_archived: false,
         sort_order: savingCategories.length + 1,
       };
-      db.saveCategory(newCat);
+      await db.saveCategory(newCat);
     }
 
     refreshData();
@@ -200,9 +203,9 @@ export const SavingsGoalsView: React.FC = () => {
     setHeadParentId(null);
   };
 
-  const handleDeleteSavingHead = (cat: Category) => {
+  const handleDeleteSavingHead = async (cat: Category) => {
     if (confirm(`Are you sure you want to permanently delete saving category "${cat.name}"?`)) {
-      db.deleteCategory(cat.id, workspaceId);
+      await db.deleteCategory(cat.id, workspaceId);
       refreshData();
     }
   };

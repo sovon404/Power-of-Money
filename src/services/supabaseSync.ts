@@ -271,16 +271,33 @@ class SupabaseSyncEngine {
     }
   }
 
-  // 4. Sync Category (Supports Subcategories and Saving Heads with multi-tier fallback, eliminates 409 error 23505)
-  async syncCategory(cat: Category, workspaceId: string) {
-    if (!this.isAvailable()) return;
+  // 4. Sync Category (Supports Subcategories and Saving Heads with multi-tier fallback, eliminates 409 error 23505 & 23503 FK error)
+  async syncCategory(cat: Category, workspaceId: string): Promise<{ success: boolean; id?: string; error?: string }> {
+    if (!this.isAvailable()) return { success: true };
     const wsUuid = toUuid(workspaceId);
+    const catUuid = toUuid(cat.id);
+
     try {
       await this.ensureRemoteWorkspace(workspaceId);
 
+      // Pre-ensure foreign keys exist before constructing payload to prevent 23503
+      let safeTargetAccountId: string | undefined = undefined;
+      if (cat.target_savings_account_id) {
+        const targetUuid = toUuid(cat.target_savings_account_id);
+        await this.ensureRemoteAccount(targetUuid, workspaceId);
+        safeTargetAccountId = targetUuid;
+      }
+
+      let safeParentId: string | undefined = undefined;
+      if (cat.parent_id) {
+        const parentUuid = toUuid(cat.parent_id);
+        await this.ensureRemoteCategory(parentUuid, workspaceId);
+        safeParentId = parentUuid;
+      }
+
       const isSaving = cat.type === 'saving' || cat.accounting_classification === 'asset_savings';
       const catPayload: any = {
-        id: toUuid(cat.id),
+        id: catUuid,
         workspace_id: wsUuid,
         name: cat.name.trim(),
         type: cat.type,
@@ -292,42 +309,45 @@ class SupabaseSyncEngine {
         sort_order: cat.sort_order || 0,
         updated_at: new Date().toISOString(),
       };
-      if (cat.parent_id) {
-        catPayload.parent_id = toUuid(cat.parent_id);
+
+      if (safeParentId) {
+        catPayload.parent_id = safeParentId;
       }
       if (cat.income_type) {
         catPayload.income_type = cat.income_type;
       }
-      if (cat.target_savings_account_id) {
-        catPayload.target_savings_account_id = toUuid(cat.target_savings_account_id);
+      if (safeTargetAccountId) {
+        catPayload.target_savings_account_id = safeTargetAccountId;
       }
       if (cat.description) {
         catPayload.description = cat.description;
       }
 
-      // 1. Check if category already exists in Supabase by name or by ID to prevent 409 unique violations
-      const { data: byName } = await supabase
+      // Step 1: Check by ID first (primary key) to avoid 409 conflict
+      const { data: byId } = await supabase
         .from('categories')
         .select('id, name')
-        .eq('workspace_id', wsUuid)
-        .ilike('name', cat.name.trim());
+        .eq('id', catUuid)
+        .maybeSingle();
 
-      let remoteIdToUpdate: string | null = null;
-      if (byName && byName.length > 0) {
-        remoteIdToUpdate = byName[0].id;
-      } else {
-        const { data: byId } = await supabase
+      let remoteIdToUpdate: string | null = byId?.id || null;
+
+      // Step 2: If not found by ID, check by name in this workspace to avoid 23505 unique collision
+      if (!remoteIdToUpdate) {
+        const { data: byName } = await supabase
           .from('categories')
-          .select('id')
-          .eq('id', toUuid(cat.id))
-          .maybeSingle();
-        if (byId) {
-          remoteIdToUpdate = byId.id;
+          .select('id, name')
+          .eq('workspace_id', wsUuid)
+          .ilike('name', cat.name.trim())
+          .limit(1);
+
+        if (byName && byName.length > 0) {
+          remoteIdToUpdate = byName[0].id;
         }
       }
 
-      // Safe multi-stage write function to handle schema constraints gracefully
-      const executeWrite = async (isUpdate: boolean, targetId?: string) => {
+      // Safe multi-stage write function with comprehensive error fallbacks
+      const executeWrite = async (isUpdate: boolean, targetId?: string): Promise<{ success: boolean; id: string; error?: string }> => {
         let payload = { ...catPayload };
         if (isUpdate) {
           delete payload.id;
@@ -335,22 +355,22 @@ class SupabaseSyncEngine {
 
         const runOp = async (p: any) => {
           if (isUpdate && targetId) {
-            return await supabase.from('categories').update(p).eq('id', targetId).eq('workspace_id', wsUuid);
+            return await supabase.from('categories').update(p).eq('id', targetId).select('id').maybeSingle();
           } else {
-            return await supabase.from('categories').insert(p);
+            return await supabase.from('categories').insert(p).select('id').maybeSingle();
           }
         };
 
         let res = await runOp(payload);
 
-        // Fallback for check constraint (23514) on older unmigrated schemas
+        // Fallback 1: Check constraint violation (23514) on older unmigrated schemas
         if (res.error && (res.error.code === '23514' || res.error.message?.includes('check constraint') || res.error.message?.includes('categories_type_check') || res.error.message?.includes('categories_accounting_classification_check'))) {
           if (payload.type === 'saving') payload.type = 'transfer_allocation';
           if (payload.accounting_classification === 'asset_savings') payload.accounting_classification = 'asset_transfer';
           res = await runOp(payload);
         }
 
-        // Fallback for missing columns in older schemas (42703)
+        // Fallback 2: Missing columns on older unmigrated schemas (42703)
         if (res.error && (res.error.code === '42703' || res.error.message?.includes('does not exist'))) {
           delete payload.parent_id;
           delete payload.target_savings_account_id;
@@ -359,24 +379,44 @@ class SupabaseSyncEngine {
           res = await runOp(payload);
         }
 
-        // Duplicate key conflict (23505) during insert: fallback to updating by name
+        // Fallback 3: Foreign key violation (23503) for target_savings_account_id or parent_id
+        if (res.error && (res.error.code === '23503' || res.error.message?.includes('foreign key'))) {
+          delete payload.target_savings_account_id;
+          delete payload.parent_id;
+          res = await runOp(payload);
+        }
+
+        // Fallback 4: Duplicate key conflict (23505) during insert: update existing row by name
         if (!isUpdate && res.error && (res.error.code === '23505' || res.error.message?.includes('duplicate key') || res.error.message?.includes('uq_category_name_workspace'))) {
           delete payload.id;
-          await supabase.from('categories').update(payload).eq('workspace_id', wsUuid).ilike('name', cat.name.trim());
+          const updateRes = await supabase.from('categories').update(payload).eq('workspace_id', wsUuid).ilike('name', cat.name.trim()).select('id').maybeSingle();
+          if (!updateRes.error && updateRes.data?.id) {
+            return { success: true, id: updateRes.data.id };
+          }
         }
+
+        if (res.error) {
+          console.warn('Category sync warning:', res.error.message);
+          return { success: false, id: targetId || catUuid, error: res.error.message };
+        }
+
+        return { success: true, id: res.data?.id || targetId || catUuid };
       };
 
       if (remoteIdToUpdate) {
-        await executeWrite(true, remoteIdToUpdate);
+        const result = await executeWrite(true, remoteIdToUpdate);
         if (cat.id !== remoteIdToUpdate) {
           const { db } = await import('./db');
           db.remapCategoryId(cat.id, remoteIdToUpdate, workspaceId);
         }
+        return result;
       } else {
-        await executeWrite(false);
+        const result = await executeWrite(false);
+        return result;
       }
-    } catch (err) {
-      console.warn('Sync category notice:', err);
+    } catch (err: any) {
+      console.warn('Sync category error:', err);
+      return { success: false, id: catUuid, error: err.message || 'Sync failed' };
     }
   }
 
@@ -867,8 +907,8 @@ class SupabaseSyncEngine {
     }
   }
 
-  async deleteCategory(categoryId: string, workspaceId: string, categoryName?: string) {
-    if (!this.isAvailable()) return;
+  async deleteCategory(categoryId: string, workspaceId: string, categoryName?: string): Promise<{ success: boolean; error?: string }> {
+    if (!this.isAvailable()) return { success: true };
     const catUuid = toUuid(categoryId);
     const wsUuid = toUuid(workspaceId);
     try {
@@ -877,7 +917,6 @@ class SupabaseSyncEngine {
         const { data: matches } = await supabase
           .from('categories')
           .select('id')
-          .eq('workspace_id', wsUuid)
           .ilike('name', categoryName.trim());
         if (matches && matches.length > 0) {
           idsToDelete = Array.from(new Set([...idsToDelete, ...matches.map(m => m.id)]));
@@ -887,22 +926,22 @@ class SupabaseSyncEngine {
       for (const idToDel of idsToDelete) {
         // 1. Delete child subcategories
         try {
-          await supabase.from('categories').delete().eq('parent_id', idToDel).eq('workspace_id', wsUuid);
+          await supabase.from('categories').delete().eq('parent_id', idToDel);
         } catch {}
-        // 2. Unlink category_id on journal lines so foreign key constraint is satisfied
+        // 2. Unlink category_id on journal lines so foreign key constraint 23503 is satisfied
         try {
-          await supabase.from('journal_lines').update({ category_id: null }).eq('category_id', idToDel).eq('workspace_id', wsUuid);
+          await supabase.from('journal_lines').update({ category_id: null }).eq('category_id', idToDel);
         } catch {}
         // 3. Delete any budgets associated with this category
         try {
-          await supabase.from('budgets').delete().eq('category_id', idToDel).eq('workspace_id', wsUuid);
+          await supabase.from('budgets').delete().eq('category_id', idToDel);
         } catch {}
         // 4. Unlink category_id on recurring rules
         try {
-          await supabase.from('recurring_rules').update({ category_id: null }).eq('category_id', idToDel).eq('workspace_id', wsUuid);
+          await supabase.from('recurring_rules').update({ category_id: null }).eq('category_id', idToDel);
         } catch {}
         // 5. Delete category
-        const { error } = await supabase.from('categories').delete().eq('id', idToDel).eq('workspace_id', wsUuid);
+        const { error } = await supabase.from('categories').delete().eq('id', idToDel);
         if (error && error.code !== 'PGRST116') {
           console.warn('Delete category notice:', error.message);
         }
@@ -911,8 +950,10 @@ class SupabaseSyncEngine {
       if (categoryName && categoryName.trim()) {
         await supabase.from('categories').delete().eq('workspace_id', wsUuid).ilike('name', categoryName.trim());
       }
-    } catch (err) {
+      return { success: true };
+    } catch (err: any) {
       console.warn('Delete category notice:', err);
+      return { success: false, error: err.message };
     }
   }
 

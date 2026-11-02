@@ -407,7 +407,7 @@ export const IncomeView: React.FC = () => {
     setShowHeadModal(true);
   };
 
-  const handleSaveHead = (e: React.FormEvent) => {
+  const handleSaveHead = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!headName.trim()) return;
 
@@ -421,7 +421,7 @@ export const IncomeView: React.FC = () => {
         parent_id: headParentId || undefined,
         description: headDesc.trim() || undefined,
       };
-      db.saveCategory(updated);
+      await db.saveCategory(updated);
     } else {
       const newCat: Category = {
         id: toUuid(`cat_income_${workspaceId}_${Date.now()}`),
@@ -438,16 +438,16 @@ export const IncomeView: React.FC = () => {
         is_archived: false,
         sort_order: incomeCategories.length + 1,
       };
-      db.saveCategory(newCat);
+      await db.saveCategory(newCat);
     }
 
     refreshData();
     setShowHeadModal(false);
   };
 
-  const handleDeleteHead = (catId: string) => {
+  const handleDeleteHead = async (catId: string) => {
     if (window.confirm('Are you sure you want to remove this income head?')) {
-      db.deleteCategory(catId, workspaceId);
+      await db.deleteCategory(catId, workspaceId);
       refreshData();
       setShowHeadModal(false);
     }
