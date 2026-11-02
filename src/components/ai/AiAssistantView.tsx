@@ -542,7 +542,7 @@ export const AiAssistantView: React.FC = () => {
               </span>
             </div>
             <span className="text-2xs text-slate-400">
-              Grounded in {currentWorkspace?.name}
+              Grounded in Personal Vault
             </span>
           </div>
 

@@ -14,9 +14,7 @@ import { SavingsGoalsView } from './components/savings/SavingsGoalsView';
 import { BudgetsView } from './components/budgets/BudgetsView';
 import { RecurringBillsView } from './components/recurring/RecurringBillsView';
 import { ReportBuilderView } from './components/reports/ReportBuilderView';
-import { FamilyWorkspaceView } from './components/family/FamilyWorkspaceView';
 import { AiAssistantView } from './components/ai/AiAssistantView';
-import { OpeningBalanceWizard } from './components/setup/OpeningBalanceWizard';
 import { SettingsView } from './components/settings/SettingsView';
 import { NewTransactionModal } from './components/modals/NewTransactionModal';
 import { AuthGate } from './components/auth/AuthGate';
@@ -36,9 +34,7 @@ const VALID_VIEWS: NavItemKey[] = [
   'budgets',
   'recurring',
   'reports',
-  'family',
   'ai',
-  'setup',
   'settings'
 ];
 
@@ -94,9 +90,7 @@ const AppContent: React.FC<AppContentProps> = ({ onSignOut }) => {
     budgets: 'Budgets & Limits',
     recurring: 'Recurring & Bills',
     reports: 'Financial Reports & Telemetry',
-    family: 'Family Collaboration',
     ai: 'AI Receipt & Advisor',
-    setup: 'Opening Balances Wizard',
     settings: 'Settings & Categories',
   };
 
@@ -125,7 +119,6 @@ const AppContent: React.FC<AppContentProps> = ({ onSignOut }) => {
           onOpenAiScan={handleOpenAiScan}
         />
 
-
         {/* Viewport Content with URL Persistence */}
         <main className="flex-1 p-4 sm:p-6 max-w-7xl w-full mx-auto">
           {activeView === 'dashboard' && (
@@ -153,9 +146,7 @@ const AppContent: React.FC<AppContentProps> = ({ onSignOut }) => {
           {activeView === 'budgets' && <BudgetsView />}
           {activeView === 'recurring' && <RecurringBillsView />}
           {activeView === 'reports' && <ReportBuilderView />}
-          {activeView === 'family' && <FamilyWorkspaceView />}
           {activeView === 'ai' && <AiAssistantView />}
-          {activeView === 'setup' && <OpeningBalanceWizard />}
           {activeView === 'settings' && <SettingsView />}
         </main>
       </div>

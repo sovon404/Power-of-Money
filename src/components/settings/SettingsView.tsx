@@ -185,7 +185,9 @@ export const SettingsView: React.FC = () => {
 9. 20261101000009_master_alignment_triggers_and_rls.sql
 10. 20261101000010_historical_entries_and_crud_support.sql
 11. 20261101000011_income_types_and_dashboard_cockpit.sql
-12. 20261102000012_savings_category_and_heads.sql`;
+12. 20261102000012_savings_category_and_heads.sql
+13. 20261102000013_period_end_date_and_enhancements.sql
+14. 20261102000014_single_user_demolish_workspaces.sql`;
     navigator.clipboard.writeText(text);
     setCopiedMigration(true);
     setTimeout(() => setCopiedMigration(false), 2000);
@@ -197,10 +199,10 @@ export const SettingsView: React.FC = () => {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h2 className="text-lg font-bold text-slate-900 dark:text-white">
-            Workspace Settings &amp; Customization
+            Vault Settings &amp; Customization
           </h2>
           <p className="text-xs text-slate-500 dark:text-slate-400">
-            Customize categories, manage saving and income types, configure currency, and inspect database migrations.
+            Customize categories, manage saving and income types, configure currency, and inspect database parameters.
           </p>
         </div>
 
@@ -413,6 +415,8 @@ export const SettingsView: React.FC = () => {
               <div>10. /supabase/migrations/20261101000010_historical_entries_and_crud_support.sql (Historical Transactions &amp; Audit Logs)</div>
               <div>11. /supabase/migrations/20261101000011_income_types_and_dashboard_cockpit.sql (Income Types &amp; Realtime Trigger)</div>
               <div>12. /supabase/migrations/20261102000012_savings_category_and_heads.sql (Dedicated Savings Types &amp; Heads Linkage)</div>
+              <div>13. /supabase/migrations/20261102000013_period_end_date_and_enhancements.sql (Period End Date &amp; Financial Enhancements)</div>
+              <div>14. /supabase/migrations/20261102000014_single_user_demolish_workspaces.sql (Single-User Architecture &amp; RLS Simplification)</div>
             </div>
 
             <div className="flex items-center gap-2 pt-2">

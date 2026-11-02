@@ -130,10 +130,6 @@ export const Header: React.FC<HeaderProps> = ({
             </button>
             
             <div className="flex items-center gap-2 text-sm font-semibold text-slate-900 dark:text-white truncate">
-              <span className="text-slate-500 dark:text-slate-400 font-normal hidden sm:inline">
-                {currentWorkspace?.name}
-              </span>
-              <span className="text-slate-300 dark:text-slate-700 hidden sm:inline">/</span>
               <span className="truncate">{title}</span>
             </div>
           </div>
@@ -309,7 +305,7 @@ export const Header: React.FC<HeaderProps> = ({
                     <span className="text-xs font-semibold text-slate-900 dark:text-white block">
                       Row-Level Security (RLS) &amp; Schema
                     </span>
-                    <span className="text-3xs text-slate-400">All 36 Category Seeds &amp; Workspaces Active</span>
+                    <span className="text-3xs text-slate-400">All 36 Category Seeds &amp; Personal Vault Active</span>
                   </div>
                 </div>
                 <span className="px-2 py-0.5 rounded-full text-3xs font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300">

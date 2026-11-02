@@ -964,7 +964,7 @@ export const CreditCardsView: React.FC = () => {
             <form onSubmit={handleChargeCard} className="space-y-3.5">
               <div>
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  Expense Category (from 36 Workspace Categories)
+                  Expense Category (from 36 Categories)
                 </label>
                 <select
                   value={chargeCategoryId}

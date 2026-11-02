@@ -11,8 +11,6 @@ interface WorkspaceContextType {
   isSyncingWithDb: boolean;
   lastDbSyncTime: string | null;
   syncFromDatabase: () => Promise<void>;
-  switchWorkspace: (workspaceId: string) => void;
-  createFamilyWorkspace: (name: string, description?: string) => Workspace;
   refreshData: () => void;
   formatMoney: (amount: number, currencyOverride?: string) => string;
   isInitialSetupDone: boolean;
@@ -28,16 +26,13 @@ interface WorkspaceProviderProps {
 }
 
 export const WorkspaceProvider: React.FC<WorkspaceProviderProps> = ({ children, authUser }) => {
-  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
-  const [currentWorkspace, setCurrentWorkspace] = useState<Workspace | null>(null);
-  const [userRole, setUserRole] = useState<WorkspaceRole>('owner');
+  const [currentWorkspace, setCurrentWorkspace] = useState<Workspace | null>(() => {
+    const { workspace } = db.initializeUserWorkspace(authUser.id, authUser.name, authUser.email);
+    return workspace;
+  });
   const [refreshKey, setRefreshKey] = useState(0);
   const [isSyncingWithDb, setIsSyncingWithDb] = useState(false);
   const [lastDbSyncTime, setLastDbSyncTime] = useState<string | null>(null);
-
-  // Initial setup permanently marked done
-  const setupKey = `pom_setup_completed_${authUser.id}`;
-  const [isInitialSetupDone, setIsInitialSetupDone] = useState<boolean>(true);
 
   const refreshData = useCallback(() => {
     setRefreshKey(prev => prev + 1);
@@ -51,6 +46,8 @@ export const WorkspaceProvider: React.FC<WorkspaceProviderProps> = ({ children, 
       const remote = await supabaseSync.pullRemoteWorkspaceData(currentWorkspace.id);
       if (remote) {
         db.hydrateFromSupabase(remote, currentWorkspace.id);
+        db.ensureDefaultAccountsForWorkspace(currentWorkspace.id);
+        db.ensureCategoriesForWorkspace(currentWorkspace.id);
       }
       setLastDbSyncTime(new Date().toLocaleTimeString());
       setRefreshKey(prev => prev + 1);
@@ -64,115 +61,51 @@ export const WorkspaceProvider: React.FC<WorkspaceProviderProps> = ({ children, 
   useEffect(() => {
     let isMounted = true;
 
-    const setupUserWorkspace = async () => {
+    const setupSingleUserVault = async () => {
       setIsSyncingWithDb(true);
       try {
         const { supabase, isSupabaseConfigured } = await import('../lib/supabase');
         const { supabaseSync } = await import('../services/supabaseSync');
 
-        // 1. Sync profile first
+        // 1. Sync Profile
         await supabaseSync.syncProfile(authUser.id, authUser.email || '', authUser.name || '');
 
-        let userWorkspaces: Workspace[] = [];
-
-        // 2. Discover existing workspaces in Supabase
-        if (isSupabaseConfigured()) {
-          const { data: remoteWsList } = await supabase
-            .from('workspaces')
-            .select('*');
-
-          if (remoteWsList && remoteWsList.length > 0) {
-            userWorkspaces = remoteWsList.map(rw => ({
-              id: rw.id,
-              name: rw.name,
-              type: rw.type,
-              created_by: rw.created_by,
-              currency: rw.currency || 'BDT',
-              description: rw.description,
-              settings: rw.settings,
-              created_at: rw.created_at,
-            }));
-            userWorkspaces.forEach(w => db.saveWorkspace(w));
-          }
-        }
-
-        // 3. If no remote workspaces found, initialize user vault and write to Supabase
-        if (userWorkspaces.length === 0) {
-          const { workspace } = db.initializeUserWorkspace(authUser.id, authUser.name, authUser.email);
-          await supabaseSync.syncWorkspace(workspace, authUser.id);
-          userWorkspaces = [workspace];
-        }
-
-        const userActiveWsKey = `pom_active_workspace_${authUser.id}`;
-        const savedActiveId = localStorage.getItem(userActiveWsKey);
-        const active = userWorkspaces.find(w => w.id === savedActiveId) || userWorkspaces[0];
+        // 2. Initialize Single Vault
+        const { workspace } = db.initializeUserWorkspace(authUser.id, authUser.name, authUser.email);
+        await supabaseSync.syncWorkspace(workspace, authUser.id);
 
         if (!isMounted) return;
 
-        db.ensureDefaultAccountsForWorkspace(active.id);
-        db.ensureCategoriesForWorkspace(active.id);
-        setWorkspaces(userWorkspaces);
-        setCurrentWorkspace(active);
-        localStorage.setItem(userActiveWsKey, active.id);
-        setIsInitialSetupDone(localStorage.getItem(setupKey) === 'true');
+        db.ensureDefaultAccountsForWorkspace(workspace.id);
+        db.ensureCategoriesForWorkspace(workspace.id);
+        setCurrentWorkspace(workspace);
 
-        // 4. Hydrate all accounts, cards, loans, properties, journal entries from Supabase
-        const remote = await supabaseSync.pullRemoteWorkspaceData(active.id);
-        if (remote && isMounted) {
-          db.hydrateFromSupabase(remote, active.id);
-          db.ensureCategoriesForWorkspace(active.id);
-          setLastDbSyncTime(new Date().toLocaleTimeString());
-          setRefreshKey(prev => prev + 1);
+        // 3. Hydrate pure remote data from Supabase DB
+        if (isSupabaseConfigured()) {
+          const remote = await supabaseSync.pullRemoteWorkspaceData(workspace.id);
+          if (remote && isMounted) {
+            db.hydrateFromSupabase(remote, workspace.id);
+            db.ensureDefaultAccountsForWorkspace(workspace.id);
+            db.ensureCategoriesForWorkspace(workspace.id);
+            setLastDbSyncTime(new Date().toLocaleTimeString());
+            setRefreshKey(prev => prev + 1);
+          }
         }
       } catch (err) {
-        console.warn('Workspace discovery notice:', err);
+        console.warn('Single user vault discovery notice:', err);
       } finally {
         if (isMounted) setIsSyncingWithDb(false);
       }
     };
 
-    setupUserWorkspace();
+    setupSingleUserVault();
 
     return () => {
       isMounted = false;
     };
-  }, [authUser.id, authUser.name, authUser.email, setupKey]);
-
-  const switchWorkspace = (workspaceId: string) => {
-    const found = workspaces.find(w => w.id === workspaceId);
-    if (found) {
-      db.ensureDefaultAccountsForWorkspace(found.id);
-      db.ensureCategoriesForWorkspace(found.id);
-      setCurrentWorkspace(found);
-      localStorage.setItem(`pom_active_workspace_${authUser.id}`, found.id);
-      setUserRole(found.created_by === authUser.id ? 'owner' : 'editor');
-      refreshData();
-    }
-  };
-
-  const createFamilyWorkspace = (name: string, description?: string): Workspace => {
-    const newWs: Workspace = {
-      id: `ws_family_${authUser.id}_${Date.now()}`,
-      name,
-      type: 'family',
-      created_by: authUser.id,
-      currency: currentWorkspace?.currency || 'BDT',
-      description: description || 'Family financial collaboration workspace',
-      created_at: new Date().toISOString(),
-    };
-    db.saveWorkspace(newWs);
-    db.seedCategoriesForWorkspace(newWs.id);
-    db.ensureDefaultAccountsForWorkspace(newWs.id);
-    
-    const updated = db.getWorkspaces(authUser.id);
-    setWorkspaces(updated);
-    switchWorkspace(newWs.id);
-    return newWs;
-  };
+  }, [authUser.id, authUser.name, authUser.email]);
 
   const completeInitialSetup = () => {
-    localStorage.setItem(setupKey, 'true');
-    setIsInitialSetupDone(true);
     refreshData();
   };
 
@@ -187,11 +120,8 @@ export const WorkspaceProvider: React.FC<WorkspaceProviderProps> = ({ children, 
     };
     db.saveWorkspace(updatedWs);
     setCurrentWorkspace(updatedWs);
-    setWorkspaces(prev => prev.map(w => w.id === updatedWs.id ? updatedWs : w));
     refreshData();
   }, [currentWorkspace, refreshData]);
-
-  const canWrite = userRole === 'owner' || userRole === 'admin' || userRole === 'editor';
 
   const formatMoney = (amount: number, currencyOverride?: string): string => {
     const curr = currencyOverride || currentWorkspace?.currency || 'BDT';
@@ -210,17 +140,15 @@ export const WorkspaceProvider: React.FC<WorkspaceProviderProps> = ({ children, 
       value={{
         currentUser: authUser,
         currentWorkspace,
-        workspaces,
-        userRole,
-        canWrite,
+        workspaces: currentWorkspace ? [currentWorkspace] : [],
+        userRole: 'owner',
+        canWrite: true,
         isSyncingWithDb,
         lastDbSyncTime,
         syncFromDatabase,
-        switchWorkspace,
-        createFamilyWorkspace,
         refreshData,
         formatMoney,
-        isInitialSetupDone,
+        isInitialSetupDone: true,
         completeInitialSetup,
         updateWorkspaceSettings,
       }}
