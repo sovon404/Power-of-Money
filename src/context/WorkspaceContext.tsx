@@ -74,9 +74,6 @@ export const WorkspaceProvider: React.FC<WorkspaceProviderProps> = ({ children, 
 
         if (!isMounted) return;
 
-        // Ensure defaults only on first initialization
-        db.ensureDefaultAccountsForWorkspace(workspace.id);
-        db.ensureCategoriesForWorkspace(workspace.id);
         setCurrentWorkspace(workspace);
 
         // 3. Hydrate pure remote data from Supabase DB
@@ -85,6 +82,17 @@ export const WorkspaceProvider: React.FC<WorkspaceProviderProps> = ({ children, 
           if (remote && isMounted) {
             db.hydrateFromSupabase(remote, workspace.id);
             setLastDbSyncTime(new Date().toLocaleTimeString());
+            setRefreshKey(prev => prev + 1);
+
+            const hasRemoteData = (remote.accounts && remote.accounts.length > 0) || (remote.categories && remote.categories.length > 0);
+            if (!hasRemoteData && !db.isWorkspaceSeeded(workspace.id)) {
+              db.seedInitialWorkspaceDefaults(workspace.id);
+              setRefreshKey(prev => prev + 1);
+            }
+          }
+        } else {
+          if (!db.isWorkspaceSeeded(workspace.id)) {
+            db.seedInitialWorkspaceDefaults(workspace.id);
             setRefreshKey(prev => prev + 1);
           }
         }

@@ -40,6 +40,13 @@ const STORAGE_KEYS = {
   AUDIT_LOGS: 'pom_audit_logs',
   DELETED_ACCOUNTS: 'pom_deleted_accounts',
   DELETED_CATEGORIES: 'pom_deleted_categories',
+  DELETED_CARDS: 'pom_deleted_cards',
+  DELETED_LOANS: 'pom_deleted_loans',
+  DELETED_PROPERTIES: 'pom_deleted_properties',
+  DELETED_BUDGETS: 'pom_deleted_budgets',
+  DELETED_GOALS: 'pom_deleted_goals',
+  DELETED_RULES: 'pom_deleted_rules',
+  DELETED_ENTRIES: 'pom_deleted_entries',
 };
 
 // Seed Categories specified by user
@@ -137,6 +144,17 @@ class DatabaseEngine {
     }
   }
 
+  isWorkspaceSeeded(workspaceId: string): boolean {
+    return Boolean(localStorage.getItem(`pom_seeded_workspace_${workspaceId}`));
+  }
+
+  seedInitialWorkspaceDefaults(workspaceId: string): void {
+    if (this.isWorkspaceSeeded(workspaceId)) return;
+    this.ensureDefaultAccountsForWorkspace(workspaceId);
+    this.ensureCategoriesForWorkspace(workspaceId);
+    localStorage.setItem(`pom_seeded_workspace_${workspaceId}`, 'true');
+  }
+
   // Initialize workspace bound strictly to authenticated user's ID
   initializeUserWorkspace(userId: string, userName?: string, userEmail?: string): { workspace: Workspace; isNew: boolean } {
     const wsUuid = toUuid(`ws_${userId}`);
@@ -155,11 +173,9 @@ class DatabaseEngine {
         created_at: new Date().toISOString(),
       };
       this.saveWorkspace(activeWs);
-      this.ensureCategoriesForWorkspace(activeWs.id);
       isNew = true;
     } else {
       activeWs = workspaces[0];
-      this.ensureCategoriesForWorkspace(activeWs.id);
     }
 
     // Direct cloud sync to Supabase (profiles, workspaces)
@@ -305,6 +321,13 @@ class DatabaseEngine {
   }, workspaceId: string): void {
     const deletedAccs = new Set(this.get<string[]>(STORAGE_KEYS.DELETED_ACCOUNTS, []).map(s => s.toLowerCase().trim()));
     const deletedCats = new Set(this.get<string[]>(STORAGE_KEYS.DELETED_CATEGORIES, []).map(s => s.toLowerCase().trim()));
+    const deletedCards = new Set(this.get<string[]>(STORAGE_KEYS.DELETED_CARDS, []).map(s => s.toLowerCase().trim()));
+    const deletedLoans = new Set(this.get<string[]>(STORAGE_KEYS.DELETED_LOANS, []).map(s => s.toLowerCase().trim()));
+    const deletedProps = new Set(this.get<string[]>(STORAGE_KEYS.DELETED_PROPERTIES, []).map(s => s.toLowerCase().trim()));
+    const deletedBudgets = new Set(this.get<string[]>(STORAGE_KEYS.DELETED_BUDGETS, []).map(s => s.toLowerCase().trim()));
+    const deletedGoals = new Set(this.get<string[]>(STORAGE_KEYS.DELETED_GOALS, []).map(s => s.toLowerCase().trim()));
+    const deletedRules = new Set(this.get<string[]>(STORAGE_KEYS.DELETED_RULES, []).map(s => s.toLowerCase().trim()));
+    const deletedEntries = new Set(this.get<string[]>(STORAGE_KEYS.DELETED_ENTRIES, []).map(s => s.toLowerCase().trim()));
 
     if (data.accounts !== undefined) {
       const allAccs = this.get<FinancialAccount[]>(STORAGE_KEYS.ACCOUNTS, []);
@@ -392,38 +415,46 @@ class DatabaseEngine {
     }
     if (data.cards !== undefined) {
       const otherCards = this.get<CreditCard[]>(STORAGE_KEYS.CREDIT_CARDS, []).filter(c => c.workspace_id !== workspaceId);
-      this.set(STORAGE_KEYS.CREDIT_CARDS, [...otherCards, ...data.cards]);
+      const filtered = data.cards.filter(c => !deletedCards.has(c.id.toLowerCase()));
+      this.set(STORAGE_KEYS.CREDIT_CARDS, [...otherCards, ...filtered]);
     }
     if (data.loans !== undefined) {
       const otherLoans = this.get<Loan[]>(STORAGE_KEYS.LOANS, []).filter(l => l.workspace_id !== workspaceId);
-      this.set(STORAGE_KEYS.LOANS, [...otherLoans, ...data.loans]);
+      const filtered = data.loans.filter(l => !deletedLoans.has(l.id.toLowerCase()));
+      this.set(STORAGE_KEYS.LOANS, [...otherLoans, ...filtered]);
     }
     if (data.properties !== undefined) {
       const otherProps = this.get<Property[]>(STORAGE_KEYS.PROPERTIES, []).filter(p => p.workspace_id !== workspaceId);
-      this.set(STORAGE_KEYS.PROPERTIES, [...otherProps, ...data.properties]);
+      const filtered = data.properties.filter(p => !deletedProps.has(p.id.toLowerCase()));
+      this.set(STORAGE_KEYS.PROPERTIES, [...otherProps, ...filtered]);
     }
     if (data.budgets !== undefined) {
       const otherBudgets = this.get<Budget[]>(STORAGE_KEYS.BUDGETS, []).filter(b => b.workspace_id !== workspaceId);
-      this.set(STORAGE_KEYS.BUDGETS, [...otherBudgets, ...data.budgets]);
+      const filtered = data.budgets.filter(b => !deletedBudgets.has(b.id.toLowerCase()) && !deletedCats.has(b.category_id?.toLowerCase() || ''));
+      this.set(STORAGE_KEYS.BUDGETS, [...otherBudgets, ...filtered]);
     }
     if (data.goals !== undefined) {
       const otherGoals = this.get<SavingsGoal[]>(STORAGE_KEYS.SAVINGS_GOALS, []).filter(g => g.workspace_id !== workspaceId);
-      this.set(STORAGE_KEYS.SAVINGS_GOALS, [...otherGoals, ...data.goals]);
+      const filtered = data.goals.filter(g => !deletedGoals.has(g.id.toLowerCase()));
+      this.set(STORAGE_KEYS.SAVINGS_GOALS, [...otherGoals, ...filtered]);
     }
     if (data.rules !== undefined) {
       const otherRules = this.get<RecurringRule[]>(STORAGE_KEYS.RECURRING_RULES, []).filter(r => r.workspace_id !== workspaceId);
-      this.set(STORAGE_KEYS.RECURRING_RULES, [...otherRules, ...data.rules]);
+      const filtered = data.rules.filter(r => !deletedRules.has(r.id.toLowerCase()));
+      this.set(STORAGE_KEYS.RECURRING_RULES, [...otherRules, ...filtered]);
     }
     if (data.entries !== undefined) {
       const otherEntries = this.get<JournalEntry[]>(STORAGE_KEYS.JOURNAL_ENTRIES, []).filter(e => e.workspace_id !== workspaceId);
       const otherLines = this.get<JournalLine[]>(STORAGE_KEYS.JOURNAL_LINES, []).filter(l => l.workspace_id !== workspaceId);
+      const filteredEntries = data.entries.filter(e => !deletedEntries.has(e.id.toLowerCase()));
+      const validEntryIds = new Set(filteredEntries.map(e => e.id));
       const newLines: JournalLine[] = [];
-      data.entries.forEach(e => {
+      filteredEntries.forEach(e => {
         if ((e as any).lines && Array.isArray((e as any).lines)) {
-          newLines.push(...(e as any).lines);
+          newLines.push(...(e as any).lines.filter((l: any) => validEntryIds.has(l.journal_entry_id)));
         }
       });
-      this.set(STORAGE_KEYS.JOURNAL_ENTRIES, [...otherEntries, ...data.entries]);
+      this.set(STORAGE_KEYS.JOURNAL_ENTRIES, [...otherEntries, ...filteredEntries]);
       if (newLines.length > 0) {
         this.set(STORAGE_KEYS.JOURNAL_LINES, [...otherLines, ...newLines]);
       }
@@ -599,7 +630,7 @@ class DatabaseEngine {
     const cards = this.get<CreditCard[]>(STORAGE_KEYS.CREDIT_CARDS, []);
     this.set(STORAGE_KEYS.CREDIT_CARDS, cards.filter(c => c.account_id !== accountId));
 
-    supabaseSync.deleteAccount(accountId, workspaceId);
+    supabaseSync.deleteAccount(accountId, workspaceId, acc?.name);
   }
 
   // Journal Entries & Lines
@@ -1012,12 +1043,131 @@ class DatabaseEngine {
       if (!deleted.includes(cat.id)) deleted.push(cat.id);
       const nameLower = cat.name.toLowerCase().trim();
       if (!deleted.includes(nameLower)) deleted.push(nameLower);
+
+      // Also tombstone all child subcategories
+      const subcategories = list.filter(c => c.parent_id === categoryId);
+      for (const sub of subcategories) {
+        if (!deleted.includes(sub.id)) deleted.push(sub.id);
+        const subNameLower = sub.name.toLowerCase().trim();
+        if (!deleted.includes(subNameLower)) deleted.push(subNameLower);
+      }
+
       this.set(STORAGE_KEYS.DELETED_CATEGORIES, deleted);
     }
     // Also remove any subcategories belonging to this category
     const remaining = list.filter(c => c.id !== categoryId && c.parent_id !== categoryId);
     this.set(STORAGE_KEYS.CATEGORIES, remaining);
-    supabaseSync.deleteCategory(categoryId, workspaceId);
+    supabaseSync.deleteCategory(categoryId, workspaceId, cat?.name);
+  }
+
+  remapCategoryId(oldId: string, newId: string, workspaceId: string): void {
+    if (oldId === newId) return;
+    const cats = this.get<Category[]>(STORAGE_KEYS.CATEGORIES, []);
+    let updatedCats = false;
+    cats.forEach(c => {
+      if (c.id === oldId) {
+        c.id = newId;
+        updatedCats = true;
+      }
+      if (c.parent_id === oldId) {
+        c.parent_id = newId;
+        updatedCats = true;
+      }
+    });
+    if (updatedCats) this.set(STORAGE_KEYS.CATEGORIES, cats);
+
+    const lines = this.get<JournalLine[]>(STORAGE_KEYS.JOURNAL_LINES, []);
+    let updatedLines = false;
+    lines.forEach(l => {
+      if (l.category_id === oldId) {
+        l.category_id = newId;
+        updatedLines = true;
+      }
+    });
+    if (updatedLines) this.set(STORAGE_KEYS.JOURNAL_LINES, lines);
+
+    const budgets = this.get<Budget[]>(STORAGE_KEYS.BUDGETS, []);
+    let updatedBudgets = false;
+    budgets.forEach(b => {
+      if (b.category_id === oldId) {
+        b.category_id = newId;
+        updatedBudgets = true;
+      }
+    });
+    if (updatedBudgets) this.set(STORAGE_KEYS.BUDGETS, budgets);
+
+    const rules = this.get<RecurringRule[]>(STORAGE_KEYS.RECURRING_RULES, []);
+    let updatedRules = false;
+    rules.forEach(r => {
+      if (r.category_id === oldId) {
+        r.category_id = newId;
+        updatedRules = true;
+      }
+    });
+    if (updatedRules) this.set(STORAGE_KEYS.RECURRING_RULES, rules);
+  }
+
+  remapAccountId(oldId: string, newId: string, workspaceId: string): void {
+    if (oldId === newId) return;
+    const accs = this.get<FinancialAccount[]>(STORAGE_KEYS.ACCOUNTS, []);
+    let updatedAccs = false;
+    accs.forEach(a => {
+      if (a.id === oldId) {
+        a.id = newId;
+        updatedAccs = true;
+      }
+    });
+    if (updatedAccs) this.set(STORAGE_KEYS.ACCOUNTS, accs);
+
+    const lines = this.get<JournalLine[]>(STORAGE_KEYS.JOURNAL_LINES, []);
+    let updatedLines = false;
+    lines.forEach(l => {
+      if (l.account_id === oldId) {
+        l.account_id = newId;
+        updatedLines = true;
+      }
+    });
+    if (updatedLines) this.set(STORAGE_KEYS.JOURNAL_LINES, lines);
+
+    const cards = this.get<CreditCard[]>(STORAGE_KEYS.CREDIT_CARDS, []);
+    let updatedCards = false;
+    cards.forEach(c => {
+      if (c.account_id === oldId) {
+        c.account_id = newId;
+        updatedCards = true;
+      }
+    });
+    if (updatedCards) this.set(STORAGE_KEYS.CREDIT_CARDS, cards);
+
+    const loans = this.get<Loan[]>(STORAGE_KEYS.LOANS, []);
+    let updatedLoans = false;
+    loans.forEach(l => {
+      if (l.account_id === oldId) {
+        l.account_id = newId;
+        updatedLoans = true;
+      }
+    });
+    if (updatedLoans) this.set(STORAGE_KEYS.LOANS, loans);
+
+    const goals = this.get<SavingsGoal[]>(STORAGE_KEYS.SAVINGS_GOALS, []);
+    let updatedGoals = false;
+    goals.forEach(g => {
+      if (g.account_id === oldId) {
+        g.account_id = newId;
+        updatedGoals = true;
+      }
+    });
+    if (updatedGoals) this.set(STORAGE_KEYS.SAVINGS_GOALS, goals);
+
+    const cats = this.get<Category[]>(STORAGE_KEYS.CATEGORIES, []);
+    let updatedCats = false;
+    cats.forEach(c => {
+      if (c.target_savings_account_id === oldId) {
+        c.target_savings_account_id = newId;
+        updatedCats = true;
+      }
+    });
+    if (updatedCats) this.set(STORAGE_KEYS.CATEGORIES, cats);
   }
 
   // Credit Cards
@@ -1034,6 +1184,11 @@ class DatabaseEngine {
     } else {
       list.push(card);
     }
+    const deletedCards = this.get<string[]>(STORAGE_KEYS.DELETED_CARDS, []);
+    const updatedDeleted = deletedCards.filter(id => id !== card.id);
+    if (updatedDeleted.length !== deletedCards.length) {
+      this.set(STORAGE_KEYS.DELETED_CARDS, updatedDeleted);
+    }
     this.set(STORAGE_KEYS.CREDIT_CARDS, list);
     supabaseSync.syncCreditCard(card, card.workspace_id);
   }
@@ -1048,6 +1203,11 @@ class DatabaseEngine {
     }
     const cardToDelete = list.find(c => c.id === cardId);
     this.set(STORAGE_KEYS.CREDIT_CARDS, list.filter(c => c.id !== cardId));
+
+    const deletedCards = this.get<string[]>(STORAGE_KEYS.DELETED_CARDS, []);
+    if (!deletedCards.includes(cardId)) deletedCards.push(cardId);
+    this.set(STORAGE_KEYS.DELETED_CARDS, deletedCards);
+
     supabaseSync.deleteCreditCard(cardId, workspaceId);
 
     // Also remove or archive underlying liability account if user deletes card
@@ -1070,6 +1230,11 @@ class DatabaseEngine {
     } else {
       list.push(loan);
     }
+    const deletedLoans = this.get<string[]>(STORAGE_KEYS.DELETED_LOANS, []);
+    const updatedDeleted = deletedLoans.filter(id => id !== loan.id);
+    if (updatedDeleted.length !== deletedLoans.length) {
+      this.set(STORAGE_KEYS.DELETED_LOANS, updatedDeleted);
+    }
     this.set(STORAGE_KEYS.LOANS, list);
     supabaseSync.syncLoan(loan, loan.workspace_id);
   }
@@ -1083,6 +1248,11 @@ class DatabaseEngine {
       workspaceId = arg1;
     }
     this.set(STORAGE_KEYS.LOANS, list.filter(l => l.id !== loanId));
+
+    const deletedLoans = this.get<string[]>(STORAGE_KEYS.DELETED_LOANS, []);
+    if (!deletedLoans.includes(loanId)) deletedLoans.push(loanId);
+    this.set(STORAGE_KEYS.DELETED_LOANS, deletedLoans);
+
     supabaseSync.deleteLoan(loanId, workspaceId);
   }
 
@@ -1100,6 +1270,11 @@ class DatabaseEngine {
     } else {
       list.push(prop);
     }
+    const deletedProps = this.get<string[]>(STORAGE_KEYS.DELETED_PROPERTIES, []);
+    const updatedDeleted = deletedProps.filter(id => id !== prop.id);
+    if (updatedDeleted.length !== deletedProps.length) {
+      this.set(STORAGE_KEYS.DELETED_PROPERTIES, updatedDeleted);
+    }
     this.set(STORAGE_KEYS.PROPERTIES, list);
     supabaseSync.syncProperty(prop, prop.workspace_id);
   }
@@ -1113,6 +1288,11 @@ class DatabaseEngine {
       workspaceId = arg1;
     }
     this.set(STORAGE_KEYS.PROPERTIES, list.filter(p => p.id !== propertyId));
+
+    const deletedProps = this.get<string[]>(STORAGE_KEYS.DELETED_PROPERTIES, []);
+    if (!deletedProps.includes(propertyId)) deletedProps.push(propertyId);
+    this.set(STORAGE_KEYS.DELETED_PROPERTIES, deletedProps);
+
     supabaseSync.deleteProperty(propertyId, workspaceId);
   }
 
@@ -1130,6 +1310,11 @@ class DatabaseEngine {
     } else {
       list.push(budget);
     }
+    const deletedBudgets = this.get<string[]>(STORAGE_KEYS.DELETED_BUDGETS, []);
+    const updatedDeleted = deletedBudgets.filter(id => id !== budget.id);
+    if (updatedDeleted.length !== deletedBudgets.length) {
+      this.set(STORAGE_KEYS.DELETED_BUDGETS, updatedDeleted);
+    }
     this.set(STORAGE_KEYS.BUDGETS, list);
     supabaseSync.syncBudget(budget, budget.workspace_id);
   }
@@ -1143,6 +1328,11 @@ class DatabaseEngine {
       workspaceId = arg1;
     }
     this.set(STORAGE_KEYS.BUDGETS, list.filter(b => b.id !== budgetId));
+
+    const deletedBudgets = this.get<string[]>(STORAGE_KEYS.DELETED_BUDGETS, []);
+    if (!deletedBudgets.includes(budgetId)) deletedBudgets.push(budgetId);
+    this.set(STORAGE_KEYS.DELETED_BUDGETS, deletedBudgets);
+
     supabaseSync.deleteBudget(budgetId, workspaceId);
   }
 
@@ -1160,6 +1350,11 @@ class DatabaseEngine {
     } else {
       list.push(goal);
     }
+    const deletedGoals = this.get<string[]>(STORAGE_KEYS.DELETED_GOALS, []);
+    const updatedDeleted = deletedGoals.filter(id => id !== goal.id);
+    if (updatedDeleted.length !== deletedGoals.length) {
+      this.set(STORAGE_KEYS.DELETED_GOALS, updatedDeleted);
+    }
     this.set(STORAGE_KEYS.SAVINGS_GOALS, list);
     supabaseSync.syncSavingsGoal(goal, goal.workspace_id);
   }
@@ -1173,6 +1368,11 @@ class DatabaseEngine {
       workspaceId = arg1;
     }
     this.set(STORAGE_KEYS.SAVINGS_GOALS, list.filter(g => g.id !== goalId));
+
+    const deletedGoals = this.get<string[]>(STORAGE_KEYS.DELETED_GOALS, []);
+    if (!deletedGoals.includes(goalId)) deletedGoals.push(goalId);
+    this.set(STORAGE_KEYS.DELETED_GOALS, deletedGoals);
+
     supabaseSync.deleteSavingsGoal(goalId, workspaceId);
   }
 
@@ -1190,6 +1390,11 @@ class DatabaseEngine {
     } else {
       list.push(rule);
     }
+    const deletedRules = this.get<string[]>(STORAGE_KEYS.DELETED_RULES, []);
+    const updatedDeleted = deletedRules.filter(id => id !== rule.id);
+    if (updatedDeleted.length !== deletedRules.length) {
+      this.set(STORAGE_KEYS.DELETED_RULES, updatedDeleted);
+    }
     this.set(STORAGE_KEYS.RECURRING_RULES, list);
     supabaseSync.syncRecurringRule(rule, rule.workspace_id);
   }
@@ -1203,6 +1408,11 @@ class DatabaseEngine {
       workspaceId = arg1;
     }
     this.set(STORAGE_KEYS.RECURRING_RULES, list.filter(r => r.id !== ruleId));
+
+    const deletedRules = this.get<string[]>(STORAGE_KEYS.DELETED_RULES, []);
+    if (!deletedRules.includes(ruleId)) deletedRules.push(ruleId);
+    this.set(STORAGE_KEYS.DELETED_RULES, deletedRules);
+
     supabaseSync.deleteRecurringRule(ruleId, workspaceId);
   }
 

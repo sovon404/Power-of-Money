@@ -89,21 +89,38 @@ class SupabaseSyncEngine {
         .maybeSingle();
 
       if (!existing) {
-        await supabase.from('financial_accounts').upsert({
-          id: accUuid,
-          workspace_id: wsUuid,
-          name: defaultName || 'Account',
-          account_type_id: defaultType,
-          provider: defaultType === 'credit_card' ? 'Credit Card' : 'Other',
-          currency: 'BDT',
-          opening_balance: 0,
-          opening_date: new Date().toISOString().split('T')[0],
-          current_balance_cached: 0,
-          is_archived: false,
-          icon: defaultType === 'credit_card' ? 'credit-card' : 'wallet',
-          color: defaultType === 'credit_card' ? '#e11d48' : '#0284c7',
-          updated_at: new Date().toISOString(),
-        });
+        const { db } = await import('./db');
+        const localAccs = db.getAccounts(workspaceId);
+        const localAcc = localAccs.find(a => toUuid(a.id) === accUuid || a.id === accountId);
+        if (localAcc) {
+          await this.syncAccount(localAcc, workspaceId);
+        } else {
+          const nameToUse = defaultName || 'Account';
+          const { data: byName } = await supabase
+            .from('financial_accounts')
+            .select('id')
+            .eq('workspace_id', wsUuid)
+            .ilike('name', nameToUse)
+            .maybeSingle();
+
+          if (!byName) {
+            await supabase.from('financial_accounts').insert({
+              id: accUuid,
+              workspace_id: wsUuid,
+              name: `${nameToUse} (${accUuid.slice(0, 4)})`,
+              account_type_id: defaultType,
+              provider: defaultType === 'credit_card' ? 'Credit Card' : 'Other',
+              currency: 'BDT',
+              opening_balance: 0,
+              opening_date: new Date().toISOString().split('T')[0],
+              current_balance_cached: 0,
+              is_archived: false,
+              icon: defaultType === 'credit_card' ? 'credit-card' : 'wallet',
+              color: defaultType === 'credit_card' ? '#e11d48' : '#0284c7',
+              updated_at: new Date().toISOString(),
+            });
+          }
+        }
       }
     } catch (e) {
       console.warn('ensureRemoteAccount notice:', e);
@@ -123,19 +140,36 @@ class SupabaseSyncEngine {
         .maybeSingle();
 
       if (!existing) {
-        await supabase.from('categories').upsert({
-          id: catUuid,
-          workspace_id: wsUuid,
-          name: defaultName || 'General',
-          type: 'expense',
-          accounting_classification: 'expense_operating',
-          icon: 'tag',
-          color: '#64748b',
-          is_seed: false,
-          is_archived: false,
-          sort_order: 99,
-          updated_at: new Date().toISOString(),
-        });
+        const { db } = await import('./db');
+        const localCats = db.getCategories(workspaceId);
+        const localCat = localCats.find(c => toUuid(c.id) === catUuid || c.id === categoryId);
+        if (localCat) {
+          await this.syncCategory(localCat, workspaceId);
+        } else {
+          const nameToUse = defaultName || 'General';
+          const { data: byName } = await supabase
+            .from('categories')
+            .select('id')
+            .eq('workspace_id', wsUuid)
+            .ilike('name', nameToUse)
+            .maybeSingle();
+
+          if (!byName) {
+            await supabase.from('categories').insert({
+              id: catUuid,
+              workspace_id: wsUuid,
+              name: `${nameToUse} (${catUuid.slice(0, 4)})`,
+              type: 'expense',
+              accounting_classification: 'expense_operating',
+              icon: 'tag',
+              color: '#64748b',
+              is_seed: false,
+              is_archived: false,
+              sort_order: 99,
+              updated_at: new Date().toISOString(),
+            });
+          }
+        }
       }
     } catch (e) {
       console.warn('ensureRemoteCategory notice:', e);
@@ -176,17 +210,18 @@ class SupabaseSyncEngine {
     }
   }
 
-  // 3. Sync Financial Account
+  // 3. Sync Financial Account (Checks by Name and ID to prevent 409 duplicate conflicts)
   async syncAccount(account: FinancialAccount, workspaceId: string) {
     if (!this.isAvailable()) return;
     const wsUuid = toUuid(workspaceId);
     try {
       await this.ensureRemoteWorkspace(workspaceId);
 
-      const { error } = await supabase.from('financial_accounts').upsert({
-        id: toUuid(account.id),
+      const accUuid = toUuid(account.id);
+      const accPayload: any = {
+        id: accUuid,
         workspace_id: wsUuid,
-        name: account.name,
+        name: account.name.trim(),
         account_type_id: account.account_type_id,
         provider: account.provider || 'Other',
         account_number_masked: account.account_number_masked || null,
@@ -199,17 +234,44 @@ class SupabaseSyncEngine {
         color: account.color || '#0284c7',
         notes: account.notes || null,
         updated_at: new Date().toISOString(),
-      });
+      };
 
-      if (error) {
-        console.error('Supabase financial_accounts error:', error);
+      // Check if account already exists by name or by ID to prevent duplicate key errors
+      const { data: byName } = await supabase
+        .from('financial_accounts')
+        .select('id')
+        .eq('workspace_id', wsUuid)
+        .ilike('name', account.name.trim());
+
+      let remoteId: string | null = null;
+      if (byName && byName.length > 0) {
+        remoteId = byName[0].id;
+      } else {
+        const { data: byId } = await supabase
+          .from('financial_accounts')
+          .select('id')
+          .eq('id', accUuid)
+          .maybeSingle();
+        if (byId) remoteId = byId.id;
+      }
+
+      if (remoteId) {
+        const updatePayload = { ...accPayload };
+        delete updatePayload.id;
+        await supabase.from('financial_accounts').update(updatePayload).eq('id', remoteId).eq('workspace_id', wsUuid);
+        if (account.id !== remoteId) {
+          const { db } = await import('./db');
+          db.remapAccountId(account.id, remoteId, workspaceId);
+        }
+      } else {
+        await supabase.from('financial_accounts').insert(accPayload);
       }
     } catch (err) {
       console.warn('Sync account error:', err);
     }
   }
 
-  // 4. Sync Category (Supports Subcategories and Saving Heads with multi-tier fallback)
+  // 4. Sync Category (Supports Subcategories and Saving Heads with multi-tier fallback, eliminates 409 error 23505)
   async syncCategory(cat: Category, workspaceId: string) {
     if (!this.isAvailable()) return;
     const wsUuid = toUuid(workspaceId);
@@ -220,7 +282,7 @@ class SupabaseSyncEngine {
       const catPayload: any = {
         id: toUuid(cat.id),
         workspace_id: wsUuid,
-        name: cat.name,
+        name: cat.name.trim(),
         type: cat.type,
         accounting_classification: cat.accounting_classification || (isSaving ? 'asset_savings' : 'expense_operating'),
         icon: cat.icon || (isSaving ? 'piggy-bank' : 'tag'),
@@ -243,54 +305,76 @@ class SupabaseSyncEngine {
         catPayload.description = cat.description;
       }
 
-      // Safe multi-stage upsert function to gracefully handle older database schemas
-      const sendUpsert = async (payload: any): Promise<boolean> => {
-        try {
-          const { error } = await supabase.from('categories').upsert(payload);
-          if (!error) return true;
+      // 1. Check if category already exists in Supabase by name or by ID to prevent 409 unique violations
+      const { data: byName } = await supabase
+        .from('categories')
+        .select('id, name')
+        .eq('workspace_id', wsUuid)
+        .ilike('name', cat.name.trim());
 
-          // Check constraint violation (23514): schema hasn't run migration 15 yet
-          if (error.code === '23514' || error.message?.includes('check constraint') || error.message?.includes('categories_type_check') || error.message?.includes('categories_accounting_classification_check')) {
-            const fallbackPayload = { ...payload };
-            if (fallbackPayload.type === 'saving') {
-              fallbackPayload.type = 'transfer_allocation';
-            }
-            if (fallbackPayload.accounting_classification === 'asset_savings') {
-              fallbackPayload.accounting_classification = 'asset_transfer';
-            }
-            const res2 = await supabase.from('categories').upsert(fallbackPayload);
-            if (!res2.error) return true;
+      let remoteIdToUpdate: string | null = null;
+      if (byName && byName.length > 0) {
+        remoteIdToUpdate = byName[0].id;
+      } else {
+        const { data: byId } = await supabase
+          .from('categories')
+          .select('id')
+          .eq('id', toUuid(cat.id))
+          .maybeSingle();
+        if (byId) {
+          remoteIdToUpdate = byId.id;
+        }
+      }
+
+      // Safe multi-stage write function to handle schema constraints gracefully
+      const executeWrite = async (isUpdate: boolean, targetId?: string) => {
+        let payload = { ...catPayload };
+        if (isUpdate) {
+          delete payload.id;
+        }
+
+        const runOp = async (p: any) => {
+          if (isUpdate && targetId) {
+            return await supabase.from('categories').update(p).eq('id', targetId).eq('workspace_id', wsUuid);
+          } else {
+            return await supabase.from('categories').insert(p);
           }
+        };
 
-          // Missing column in older schema (42703)
-          if (error.code === '42703' || error.message?.includes('does not exist')) {
-            const stripped = { ...payload };
-            delete stripped.parent_id;
-            delete stripped.target_savings_account_id;
-            delete stripped.income_type;
-            delete stripped.description;
-            const res3 = await supabase.from('categories').upsert(stripped);
-            if (!res3.error) return true;
-          }
+        let res = await runOp(payload);
 
-          // Duplicate key conflict (23505)
-          if (error.code === '23505' || error.message?.includes('duplicate key') || error.message?.includes('uq_category_name_workspace')) {
-            const { id: _, ...fieldsToUpdate } = payload;
-            const updateRes = await supabase
-              .from('categories')
-              .update(fieldsToUpdate)
-              .eq('workspace_id', wsUuid)
-              .ilike('name', cat.name);
-            if (!updateRes.error) return true;
-          }
+        // Fallback for check constraint (23514) on older unmigrated schemas
+        if (res.error && (res.error.code === '23514' || res.error.message?.includes('check constraint') || res.error.message?.includes('categories_type_check') || res.error.message?.includes('categories_accounting_classification_check'))) {
+          if (payload.type === 'saving') payload.type = 'transfer_allocation';
+          if (payload.accounting_classification === 'asset_savings') payload.accounting_classification = 'asset_transfer';
+          res = await runOp(payload);
+        }
 
-          return false;
-        } catch {
-          return false;
+        // Fallback for missing columns in older schemas (42703)
+        if (res.error && (res.error.code === '42703' || res.error.message?.includes('does not exist'))) {
+          delete payload.parent_id;
+          delete payload.target_savings_account_id;
+          delete payload.income_type;
+          delete payload.description;
+          res = await runOp(payload);
+        }
+
+        // Duplicate key conflict (23505) during insert: fallback to updating by name
+        if (!isUpdate && res.error && (res.error.code === '23505' || res.error.message?.includes('duplicate key') || res.error.message?.includes('uq_category_name_workspace'))) {
+          delete payload.id;
+          await supabase.from('categories').update(payload).eq('workspace_id', wsUuid).ilike('name', cat.name.trim());
         }
       };
 
-      await sendUpsert(catPayload);
+      if (remoteIdToUpdate) {
+        await executeWrite(true, remoteIdToUpdate);
+        if (cat.id !== remoteIdToUpdate) {
+          const { db } = await import('./db');
+          db.remapCategoryId(cat.id, remoteIdToUpdate, workspaceId);
+        }
+      } else {
+        await executeWrite(false);
+      }
     } catch (err) {
       console.warn('Sync category notice:', err);
     }
@@ -680,22 +764,52 @@ class SupabaseSyncEngine {
     }
   }
 
-  async deleteAccount(accountId: string, workspaceId: string) {
+  async deleteAccount(accountId: string, workspaceId: string, accountName?: string) {
     if (!this.isAvailable()) return;
     const accUuid = toUuid(accountId);
     const wsUuid = toUuid(workspaceId);
     try {
-      // 1. Delete associated credit cards referencing this account
-      await supabase.from('credit_cards').delete().eq('account_id', accUuid).eq('workspace_id', wsUuid);
-      // 2. Unlink any loans referencing this account
-      await supabase.from('loans').update({ account_id: null }).eq('account_id', accUuid).eq('workspace_id', wsUuid);
-      // 3. Unlink any savings goals referencing this account
-      await supabase.from('savings_goals').update({ account_id: null }).eq('account_id', accUuid).eq('workspace_id', wsUuid);
-      // 4. Delete journal lines referencing this account
-      await supabase.from('journal_lines').delete().eq('account_id', accUuid).eq('workspace_id', wsUuid);
-      // 5. Delete the account itself
-      const { error } = await supabase.from('financial_accounts').delete().eq('id', accUuid).eq('workspace_id', wsUuid);
-      if (error) console.error('Delete account error from Supabase:', error);
+      let idsToDelete: string[] = [accUuid];
+      if (accountName && accountName.trim()) {
+        const { data: matches } = await supabase
+          .from('financial_accounts')
+          .select('id')
+          .eq('workspace_id', wsUuid)
+          .ilike('name', accountName.trim());
+        if (matches && matches.length > 0) {
+          idsToDelete = Array.from(new Set([...idsToDelete, ...matches.map(m => m.id)]));
+        }
+      }
+
+      for (const idToDel of idsToDelete) {
+        // 1. Unlink categories pointing to this account as target savings
+        try {
+          await supabase.from('categories').update({ target_savings_account_id: null }).eq('target_savings_account_id', idToDel).eq('workspace_id', wsUuid);
+        } catch {}
+        // 2. Delete associated credit cards referencing this account
+        try {
+          await supabase.from('credit_cards').delete().eq('account_id', idToDel).eq('workspace_id', wsUuid);
+        } catch {}
+        // 3. Unlink any loans referencing this account
+        try {
+          await supabase.from('loans').update({ account_id: null }).eq('account_id', idToDel).eq('workspace_id', wsUuid);
+        } catch {}
+        // 4. Unlink any savings goals referencing this account
+        try {
+          await supabase.from('savings_goals').update({ account_id: null }).eq('account_id', idToDel).eq('workspace_id', wsUuid);
+        } catch {}
+        // 5. Delete journal lines referencing this account
+        try {
+          await supabase.from('journal_lines').delete().eq('account_id', idToDel).eq('workspace_id', wsUuid);
+        } catch {}
+        // 6. Delete the account itself
+        const { error } = await supabase.from('financial_accounts').delete().eq('id', idToDel).eq('workspace_id', wsUuid);
+        if (error && error.code !== 'PGRST116') console.warn('Delete account error from Supabase:', error.message);
+      }
+
+      if (accountName && accountName.trim()) {
+        await supabase.from('financial_accounts').delete().eq('workspace_id', wsUuid).ilike('name', accountName.trim());
+      }
     } catch (err) {
       console.warn('Delete account error:', err);
     }
@@ -753,20 +867,49 @@ class SupabaseSyncEngine {
     }
   }
 
-  async deleteCategory(categoryId: string, workspaceId: string) {
+  async deleteCategory(categoryId: string, workspaceId: string, categoryName?: string) {
     if (!this.isAvailable()) return;
     const catUuid = toUuid(categoryId);
     const wsUuid = toUuid(workspaceId);
     try {
-      // First attempt to delete remote subcategories referencing this category
-      try {
-        await supabase.from('categories').delete().eq('parent_id', catUuid).eq('workspace_id', wsUuid);
-      } catch {
-        // parent_id column might not exist yet in unmigrated remote database
+      let idsToDelete: string[] = [catUuid];
+      if (categoryName && categoryName.trim()) {
+        const { data: matches } = await supabase
+          .from('categories')
+          .select('id')
+          .eq('workspace_id', wsUuid)
+          .ilike('name', categoryName.trim());
+        if (matches && matches.length > 0) {
+          idsToDelete = Array.from(new Set([...idsToDelete, ...matches.map(m => m.id)]));
+        }
       }
-      const { error } = await supabase.from('categories').delete().eq('id', catUuid).eq('workspace_id', wsUuid);
-      if (error && error.code !== 'PGRST116') {
-        console.warn('Delete category notice:', error.message);
+
+      for (const idToDel of idsToDelete) {
+        // 1. Delete child subcategories
+        try {
+          await supabase.from('categories').delete().eq('parent_id', idToDel).eq('workspace_id', wsUuid);
+        } catch {}
+        // 2. Unlink category_id on journal lines so foreign key constraint is satisfied
+        try {
+          await supabase.from('journal_lines').update({ category_id: null }).eq('category_id', idToDel).eq('workspace_id', wsUuid);
+        } catch {}
+        // 3. Delete any budgets associated with this category
+        try {
+          await supabase.from('budgets').delete().eq('category_id', idToDel).eq('workspace_id', wsUuid);
+        } catch {}
+        // 4. Unlink category_id on recurring rules
+        try {
+          await supabase.from('recurring_rules').update({ category_id: null }).eq('category_id', idToDel).eq('workspace_id', wsUuid);
+        } catch {}
+        // 5. Delete category
+        const { error } = await supabase.from('categories').delete().eq('id', idToDel).eq('workspace_id', wsUuid);
+        if (error && error.code !== 'PGRST116') {
+          console.warn('Delete category notice:', error.message);
+        }
+      }
+
+      if (categoryName && categoryName.trim()) {
+        await supabase.from('categories').delete().eq('workspace_id', wsUuid).ilike('name', categoryName.trim());
       }
     } catch (err) {
       console.warn('Delete category notice:', err);
