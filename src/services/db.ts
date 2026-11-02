@@ -38,6 +38,8 @@ const STORAGE_KEYS = {
   SAVINGS_GOALS: 'pom_savings_goals',
   RECURRING_RULES: 'pom_recurring_rules',
   AUDIT_LOGS: 'pom_audit_logs',
+  DELETED_ACCOUNTS: 'pom_deleted_accounts',
+  DELETED_CATEGORIES: 'pom_deleted_categories',
 };
 
 // Seed Categories specified by user
@@ -180,13 +182,22 @@ class DatabaseEngine {
   ensureCategoriesForWorkspace(workspaceId: string): Category[] {
     const allCats = this.get<Category[]>(STORAGE_KEYS.CATEGORIES, []);
     const existing = allCats.filter(c => c.workspace_id === workspaceId);
-    const existingNames = new Set(existing.map(c => c.name.toLowerCase()));
+    const existingNames = new Set(existing.map(c => c.name.toLowerCase().trim()));
+    const deletedCats = new Set(this.get<string[]>(STORAGE_KEYS.DELETED_CATEGORIES, []).map(s => s.toLowerCase().trim()));
     const missing: Category[] = [];
 
     SEED_CATEGORIES_DATA.forEach((c, i) => {
-      if (!existingNames.has(c.name.toLowerCase())) {
+      const nameKey = c.name.toLowerCase().trim();
+      const catUuid = toUuid(`cat_${workspaceId}_${nameKey.replace(/[^a-z0-9]/g, '_')}`);
+      
+      // CRITICAL: NEVER resurrect a category that was deleted by the user
+      if (deletedCats.has(nameKey) || deletedCats.has(catUuid)) {
+        return;
+      }
+
+      if (!existingNames.has(nameKey)) {
         const newCat: Category = {
-          id: toUuid(`cat_${workspaceId}_${c.name.toLowerCase().replace(/[^a-z0-9]/g, '_')}`),
+          id: catUuid,
           workspace_id: workspaceId,
           name: c.name,
           type: c.type,
@@ -292,13 +303,21 @@ class DatabaseEngine {
     goals?: SavingsGoal[];
     rules?: RecurringRule[];
   }, workspaceId: string): void {
+    const deletedAccs = new Set(this.get<string[]>(STORAGE_KEYS.DELETED_ACCOUNTS, []).map(s => s.toLowerCase().trim()));
+    const deletedCats = new Set(this.get<string[]>(STORAGE_KEYS.DELETED_CATEGORIES, []).map(s => s.toLowerCase().trim()));
+
     if (data.accounts !== undefined) {
       const allAccs = this.get<FinancialAccount[]>(STORAGE_KEYS.ACCOUNTS, []);
       const otherAccs = allAccs.filter(a => a.workspace_id !== workspaceId);
       const localAccs = allAccs.filter(a => a.workspace_id === workspaceId);
       const localMap = new Map(localAccs.map(a => [a.id, a]));
       
-      const mergedAccs = data.accounts.map(remoteAcc => {
+      const remoteFiltered = data.accounts.filter(remoteAcc => 
+        !deletedAccs.has(remoteAcc.id.toLowerCase()) && 
+        !deletedAccs.has(remoteAcc.name.toLowerCase().trim())
+      );
+
+      const mergedAccs = remoteFiltered.map(remoteAcc => {
         const local = localMap.get(remoteAcc.id);
         return {
           ...remoteAcc,
@@ -309,10 +328,10 @@ class DatabaseEngine {
         };
       });
 
-      // Preserve any local accounts not yet fetched from remote
+      // Preserve any local accounts not yet fetched from remote (unless deleted)
       const remoteAccIds = new Set(data.accounts.map(a => a.id));
       for (const local of localAccs) {
-        if (!remoteAccIds.has(local.id)) {
+        if (!remoteAccIds.has(local.id) && !deletedAccs.has(local.id.toLowerCase()) && !deletedAccs.has(local.name.toLowerCase().trim())) {
           mergedAccs.push(local);
           supabaseSync.syncAccount(local, workspaceId);
         }
@@ -331,7 +350,12 @@ class DatabaseEngine {
       const mergedCats: Category[] = [];
       const seenIds = new Set<string>();
 
-      for (const remoteCat of data.categories) {
+      const remoteFiltered = data.categories.filter(remoteCat => 
+        !deletedCats.has(remoteCat.id.toLowerCase()) && 
+        !deletedCats.has(remoteCat.name.toLowerCase().trim())
+      );
+
+      for (const remoteCat of remoteFiltered) {
         seenIds.add(remoteCat.id);
         const local = localMap.get(remoteCat.id) || localNameMap.get(remoteCat.name.toLowerCase());
         const isSaving = 
@@ -343,6 +367,8 @@ class DatabaseEngine {
 
         mergedCats.push({
           ...remoteCat,
+          parent_id: remoteCat.parent_id !== undefined ? remoteCat.parent_id : local?.parent_id,
+          description: remoteCat.description || local?.description,
           type: isSaving ? 'saving' : remoteCat.type,
           accounting_classification: isSaving ? ('asset_savings' as any) : (remoteCat.accounting_classification || 'expense_operating'),
           target_savings_account_id: remoteCat.target_savings_account_id || local?.target_savings_account_id,
@@ -351,9 +377,12 @@ class DatabaseEngine {
         });
       }
 
-      // Preserve any local categories created in the UI that haven't been fetched yet
+      // Preserve any local categories created in the UI that haven't been fetched yet (unless deleted)
       for (const local of localCats) {
-        if (!seenIds.has(local.id) && !data.categories.some(r => r.name.toLowerCase() === local.name.toLowerCase())) {
+        if (!seenIds.has(local.id) && 
+            !data.categories.some(r => r.name.toLowerCase() === local.name.toLowerCase()) &&
+            !deletedCats.has(local.id.toLowerCase()) && 
+            !deletedCats.has(local.name.toLowerCase().trim())) {
           mergedCats.push(local);
           supabaseSync.syncCategory(local, workspaceId);
         }
@@ -410,7 +439,8 @@ class DatabaseEngine {
   ensureDefaultAccountsForWorkspace(workspaceId: string): FinancialAccount[] {
     const existing = this.getAccounts(workspaceId);
     const existingUuids = new Set(existing.map(a => a.id));
-    const existingNames = new Set(existing.map(a => a.name.toLowerCase()));
+    const existingNames = new Set(existing.map(a => a.name.toLowerCase().trim()));
+    const deletedAccs = new Set(this.get<string[]>(STORAGE_KEYS.DELETED_ACCOUNTS, []).map(s => s.toLowerCase().trim()));
 
     const defaults: Array<{
       defaultId: string;
@@ -437,7 +467,14 @@ class DatabaseEngine {
 
     for (const d of defaults) {
       const uuid = toUuid(d.defaultId);
-      const nameMatch = existingNames.has(d.name.toLowerCase());
+      const nameKey = d.name.toLowerCase().trim();
+
+      // CRITICAL: NEVER resurrect an account deleted by user!
+      if (deletedAccs.has(uuid.toLowerCase()) || deletedAccs.has(nameKey)) {
+        continue;
+      }
+
+      const nameMatch = existingNames.has(nameKey);
       const idMatch = existingUuids.has(uuid);
 
       if (!nameMatch && !idMatch) {
@@ -525,6 +562,12 @@ class DatabaseEngine {
     } else {
       list.push(account);
     }
+    // If account was marked as deleted, unmark it
+    const deletedAccs = this.get<string[]>(STORAGE_KEYS.DELETED_ACCOUNTS, []);
+    const updatedDeleted = deletedAccs.filter(id => id !== account.id && id !== account.name.toLowerCase().trim());
+    if (updatedDeleted.length !== deletedAccs.length) {
+      this.set(STORAGE_KEYS.DELETED_ACCOUNTS, updatedDeleted);
+    }
     this.set(STORAGE_KEYS.ACCOUNTS, list);
     supabaseSync.syncAccount(account, account.workspace_id);
   }
@@ -537,7 +580,16 @@ class DatabaseEngine {
       accountId = arg2;
       workspaceId = arg1;
     }
+    const acc = list.find(a => a.id === accountId);
     this.set(STORAGE_KEYS.ACCOUNTS, list.filter(a => a.id !== accountId));
+
+    // Permanently record in DELETED_ACCOUNTS so ensureDefaultAccountsForWorkspace NEVER brings it back!
+    const deletedAccs = this.get<string[]>(STORAGE_KEYS.DELETED_ACCOUNTS, []);
+    if (!deletedAccs.includes(accountId)) deletedAccs.push(accountId);
+    if (acc && !deletedAccs.includes(acc.name.toLowerCase().trim())) {
+      deletedAccs.push(acc.name.toLowerCase().trim());
+    }
+    this.set(STORAGE_KEYS.DELETED_ACCOUNTS, deletedAccs);
 
     // Also purge local journal lines associated with this account
     const lines = this.get<JournalLine[]>(STORAGE_KEYS.JOURNAL_LINES, []);
@@ -919,10 +971,18 @@ class DatabaseEngine {
     return result;
   }
 
-  // Categories
+  // Categories & Subcategories
   getCategories(workspaceId: string): Category[] {
     const list = this.get<Category[]>(STORAGE_KEYS.CATEGORIES, []);
     return list.filter(c => c.workspace_id === workspaceId && !c.is_archived);
+  }
+
+  getRootCategories(workspaceId: string, type?: Category['type']): Category[] {
+    return this.getCategories(workspaceId).filter(c => !c.parent_id && (!type || c.type === type));
+  }
+
+  getSubcategories(parentId: string, workspaceId: string): Category[] {
+    return this.getCategories(workspaceId).filter(c => c.parent_id === parentId);
   }
 
   saveCategory(cat: Category): void {
@@ -933,13 +993,30 @@ class DatabaseEngine {
     } else {
       list.push(cat);
     }
+    // If this category was previously marked as deleted, unmark it
+    const deleted = this.get<string[]>(STORAGE_KEYS.DELETED_CATEGORIES, []);
+    const nameLower = cat.name.toLowerCase().trim();
+    const updatedDeleted = deleted.filter(d => d !== cat.id && d !== nameLower);
+    if (updatedDeleted.length !== deleted.length) {
+      this.set(STORAGE_KEYS.DELETED_CATEGORIES, updatedDeleted);
+    }
     this.set(STORAGE_KEYS.CATEGORIES, list);
     supabaseSync.syncCategory(cat, cat.workspace_id);
   }
 
   deleteCategory(categoryId: string, workspaceId: string): void {
     const list = this.get<Category[]>(STORAGE_KEYS.CATEGORIES, []);
-    this.set(STORAGE_KEYS.CATEGORIES, list.filter(c => c.id !== categoryId));
+    const cat = list.find(c => c.id === categoryId);
+    if (cat) {
+      const deleted = this.get<string[]>(STORAGE_KEYS.DELETED_CATEGORIES, []);
+      if (!deleted.includes(cat.id)) deleted.push(cat.id);
+      const nameLower = cat.name.toLowerCase().trim();
+      if (!deleted.includes(nameLower)) deleted.push(nameLower);
+      this.set(STORAGE_KEYS.DELETED_CATEGORIES, deleted);
+    }
+    // Also remove any subcategories belonging to this category
+    const remaining = list.filter(c => c.id !== categoryId && c.parent_id !== categoryId);
+    this.set(STORAGE_KEYS.CATEGORIES, remaining);
     supabaseSync.deleteCategory(categoryId, workspaceId);
   }
 

@@ -561,7 +561,6 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
   };
 
   // Convert categories to SelectOptions
-  // Convert categories to SelectOptions
   const activeCategories = mode === 'income' 
     ? categories.filter(c => c.type === 'income')
     : mode === 'saving'
@@ -570,8 +569,22 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
 
   const incomeTypes = db.getIncomeTypes(workspaceId);
   const incomeTypeMap = new Map(incomeTypes.map(t => [t.id, t.name]));
+  const catByIdMap = new Map(categories.map(c => [c.id, c]));
 
-  const categoryOptions = activeCategories.map(c => {
+  // Hierarchical sort: root categories first, each followed immediately by its subcategories
+  const hierarchicalCategories: typeof activeCategories = [];
+  const rootCategories = activeCategories.filter(c => !c.parent_id);
+  const orphanSubcategories = activeCategories.filter(c => c.parent_id && !rootCategories.some(r => r.id === c.parent_id));
+
+  rootCategories.forEach(root => {
+    hierarchicalCategories.push(root);
+    const subs = activeCategories.filter(c => c.parent_id === root.id);
+    subs.forEach(s => hierarchicalCategories.push(s));
+  });
+  orphanSubcategories.forEach(s => hierarchicalCategories.push(s));
+
+  const categoryOptions = hierarchicalCategories.map(c => {
+    const parent = c.parent_id ? catByIdMap.get(c.parent_id) : undefined;
     let sub: string = c.type;
     if (c.type === 'income') {
       sub = (c.income_type && incomeTypeMap.get(c.income_type)) || (c.income_type ? c.income_type.replace('_', ' ') : 'Income');
@@ -582,8 +595,8 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
     }
     return {
       value: c.id,
-      label: c.name,
-      subLabel: sub,
+      label: parent ? `↳ ${c.name}` : c.name,
+      subLabel: parent ? `Sub of ${parent.name}` : sub,
       color: c.color,
     };
   });

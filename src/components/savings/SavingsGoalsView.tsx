@@ -9,12 +9,18 @@ import {
   X,
   Sparkles,
   Edit3,
-  Trash2
+  Edit2,
+  Trash2,
+  Layers,
+  FolderTree,
+  Landmark,
+  ShieldCheck
 } from 'lucide-react';
 import { useWorkspace } from '../../context/WorkspaceContext';
 import { db } from '../../services/db';
-import { SavingsGoal } from '../../types';
+import { SavingsGoal, Category, FinancialAccount } from '../../types';
 import { NumericInput } from '../common/NumericInput';
+import { toUuid, generateUuid } from '../../lib/uuid';
 
 export const SavingsGoalsView: React.FC = () => {
   const { currentWorkspace, formatMoney, refreshData, canWrite } = useWorkspace();
@@ -23,10 +29,34 @@ export const SavingsGoalsView: React.FC = () => {
   const goals = db.getSavingsGoals(workspaceId);
   const accounts = db.getAccounts(workspaceId).filter(a => !a.is_archived);
   const liquidAccounts = accounts.filter(a => ['bank', 'cash', 'mfs'].includes(a.account_type_id));
+  const savingsAccounts = accounts.filter(a => ['savings_dps', 'investment'].includes(a.account_type_id));
+
+  // Saving Categories & Subcategories
+  const allCategories = db.getCategories(workspaceId);
+  const isSavingCategory = (c: Category) => 
+    c.type === 'saving' || 
+    c.accounting_classification === 'asset_savings' || 
+    Boolean(c.target_savings_account_id) ||
+    ['dps', 'dsp (baf)', 'unity fund-2026', 'los fund (installment)', 'friends fund installment'].includes(c.name.toLowerCase());
+  
+  const savingCategories = allCategories.filter(isSavingCategory);
+  const rootSavingCategories = savingCategories.filter(c => !c.parent_id);
 
   const [showAddModal, setShowAddModal] = useState(false);
   const [showContributeModal, setShowContributeModal] = useState(false);
   const [selectedGoal, setSelectedGoal] = useState<SavingsGoal | null>(null);
+
+  // Saving Head & Sub-category Modal state
+  const [showHeadModal, setShowHeadModal] = useState(false);
+  const [editingHeadCat, setEditingHeadCat] = useState<Category | null>(null);
+  const [headName, setHeadName] = useState('');
+  const [headDescription, setHeadDescription] = useState('');
+  const [headParentId, setHeadParentId] = useState<string | null>(null);
+  const [headTargetAcc, setHeadTargetAcc] = useState('');
+  const [headColor, setHeadColor] = useState('#0d9488');
+  const [isCreatingHeadAccount, setIsCreatingHeadAccount] = useState(false);
+  const [newAccountName, setNewAccountName] = useState('');
+  const [newAccountProvider, setNewAccountProvider] = useState('Dedicated Fund');
 
   // Edit Goal state
   const [editingGoal, setEditingGoal] = useState<SavingsGoal | null>(null);
@@ -66,6 +96,113 @@ export const SavingsGoalsView: React.FC = () => {
   const handleDeleteGoal = (goal: SavingsGoal) => {
     if (confirm(`Are you sure you want to delete the goal "${goal.name}"?`)) {
       db.deleteSavingsGoal(goal.id, workspaceId);
+      refreshData();
+    }
+  };
+
+  // Saving Head & Sub-category modal handlers
+  const openAddHeadModal = (parentId?: string | null) => {
+    setEditingHeadCat(null);
+    setHeadName('');
+    setHeadDescription('');
+    setHeadParentId(parentId || null);
+    if (parentId) {
+      const parent = savingCategories.find(c => c.id === parentId);
+      setHeadTargetAcc(parent?.target_savings_account_id || savingsAccounts[0]?.id || '');
+      setHeadColor(parent?.color || '#0d9488');
+    } else {
+      setHeadTargetAcc(savingsAccounts[0]?.id || '');
+      setHeadColor('#0d9488');
+    }
+    setIsCreatingHeadAccount(false);
+    setNewAccountName('');
+    setShowHeadModal(true);
+  };
+
+  const openEditHeadModal = (cat: Category) => {
+    setEditingHeadCat(cat);
+    setHeadName(cat.name);
+    setHeadDescription(cat.description || '');
+    setHeadParentId(cat.parent_id || null);
+    setHeadTargetAcc(cat.target_savings_account_id || savingsAccounts[0]?.id || '');
+    setHeadColor(cat.color || '#0d9488');
+    setIsCreatingHeadAccount(false);
+    setShowHeadModal(true);
+  };
+
+  const handleCreateSavingsAccountInline = (e: React.MouseEvent) => {
+    e.preventDefault();
+    if (!newAccountName.trim()) return;
+
+    const newAccId = generateUuid();
+    const newAcc: FinancialAccount = {
+      id: newAccId,
+      workspace_id: workspaceId,
+      name: newAccountName.trim(),
+      account_type_id: 'savings_dps',
+      provider: newAccountProvider.trim() || 'Dedicated Fund',
+      currency: currentWorkspace?.currency || 'BDT',
+      opening_balance: 0,
+      opening_date: new Date().toISOString().split('T')[0],
+      current_balance_cached: 0,
+      is_archived: false,
+      icon: 'piggy-bank',
+      color: '#0d9488',
+      created_at: new Date().toISOString(),
+    };
+
+    db.saveAccount(newAcc);
+    refreshData();
+    setHeadTargetAcc(newAccId);
+    setNewAccountName('');
+    setIsCreatingHeadAccount(false);
+  };
+
+  const handleSaveSavingHead = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!headName.trim()) return;
+
+    if (editingHeadCat) {
+      const updated: Category = {
+        ...editingHeadCat,
+        name: headName.trim(),
+        description: headDescription.trim() || undefined,
+        parent_id: headParentId || undefined,
+        type: 'saving',
+        accounting_classification: 'asset_savings',
+        target_savings_account_id: headTargetAcc || undefined,
+        color: headColor,
+      };
+      db.saveCategory(updated);
+    } else {
+      const newCat: Category = {
+        id: toUuid(`cat_saving_${workspaceId}_${Date.now()}`),
+        workspace_id: workspaceId,
+        name: headName.trim(),
+        description: headDescription.trim() || undefined,
+        parent_id: headParentId || undefined,
+        type: 'saving',
+        accounting_classification: 'asset_savings',
+        target_savings_account_id: headTargetAcc || undefined,
+        icon: 'piggy-bank',
+        color: headColor,
+        is_seed: false,
+        is_archived: false,
+        sort_order: savingCategories.length + 1,
+      };
+      db.saveCategory(newCat);
+    }
+
+    refreshData();
+    setShowHeadModal(false);
+    setHeadName('');
+    setHeadDescription('');
+    setHeadParentId(null);
+  };
+
+  const handleDeleteSavingHead = (cat: Category) => {
+    if (confirm(`Are you sure you want to permanently delete saving category "${cat.name}"?`)) {
+      db.deleteCategory(cat.id, workspaceId);
       refreshData();
     }
   };
@@ -321,6 +458,154 @@ export const SavingsGoalsView: React.FC = () => {
           })}
         </div>
       )}
+
+      {/* ======================================================== */}
+      {/* Saving Categories, Heads & Sub-Categories Management */}
+      {/* ======================================================== */}
+      <div className="p-6 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100 dark:border-slate-800">
+          <div>
+            <div className="flex items-center gap-2">
+              <div className="w-7 h-7 rounded-lg bg-teal-50 dark:bg-teal-950/60 text-teal-600 dark:text-teal-400 flex items-center justify-center">
+                <FolderTree className="w-4 h-4" />
+              </div>
+              <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                Saving Heads, Categories &amp; Sub-Categories
+              </h3>
+            </div>
+            <p className="text-2xs text-slate-500 dark:text-slate-400 mt-0.5">
+              Dedicated DPS heads, DSPF, Unity Fund, and nested sub-categories. Fully synced with double-entry accounting.
+            </p>
+          </div>
+
+          {canWrite && (
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => openAddHeadModal(null)}
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-teal-600 hover:bg-teal-500 text-white shadow-xs transition-colors shrink-0"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>+ New Saving Head</span>
+              </button>
+            </div>
+          )}
+        </div>
+
+        {rootSavingCategories.length === 0 ? (
+          <div className="text-center py-6 text-slate-400">
+            <p className="text-xs font-medium">No custom saving heads added yet.</p>
+            <span className="text-2xs text-slate-500">Create a dedicated saving head like DPS, DSPF, or Unity Fund above.</span>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {rootSavingCategories.map(cat => {
+              const targetAcc = cat.target_savings_account_id ? accounts.find(a => a.id === cat.target_savings_account_id) : undefined;
+              const subcats = savingCategories.filter(c => c.parent_id === cat.id);
+
+              return (
+                <div
+                  key={cat.id}
+                  className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950/50 flex flex-col justify-between hover:border-slate-300 dark:hover:border-slate-700 transition-colors group"
+                >
+                  <div>
+                    <div className="flex items-start justify-between gap-2 mb-2">
+                      <div className="flex items-center gap-2 truncate min-w-0">
+                        <span
+                          className="w-3.5 h-3.5 rounded-full shrink-0"
+                          style={{ backgroundColor: cat.color || '#0d9488' }}
+                        />
+                        <div className="truncate min-w-0">
+                          <h4 className="text-xs font-bold text-slate-900 dark:text-white truncate">
+                            {cat.name}
+                          </h4>
+                          <span className="text-3xs text-teal-600 dark:text-teal-400 font-semibold block truncate">
+                            {targetAcc ? `Linked: ${targetAcc.name}` : 'Reserved Fund Asset'}
+                          </span>
+                        </div>
+                      </div>
+
+                      {canWrite && (
+                        <div className="flex items-center gap-1 shrink-0 opacity-80 group-hover:opacity-100 transition-opacity">
+                          <button
+                            type="button"
+                            onClick={() => openAddHeadModal(cat.id)}
+                            title="Add sub-category under this head"
+                            className="px-1.5 py-0.5 rounded text-3xs font-semibold bg-teal-50 dark:bg-teal-950 text-teal-700 dark:text-teal-300 hover:bg-teal-100 flex items-center gap-0.5"
+                          >
+                            <Plus className="w-2.5 h-2.5" />
+                            <span>+ Sub</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => openEditHeadModal(cat)}
+                            title="Edit head"
+                            className="p-1 rounded text-slate-400 hover:text-teal-600 dark:hover:text-teal-400"
+                          >
+                            <Edit2 className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteSavingHead(cat)}
+                            title="Delete saving head"
+                            className="p-1 rounded text-slate-400 hover:text-rose-600 dark:hover:text-rose-400"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    {targetAcc && (
+                      <div className="flex items-center justify-between text-2xs py-1 px-2 rounded-lg bg-white dark:bg-slate-900 border border-slate-100 dark:border-slate-800 my-2">
+                        <span className="text-slate-500 dark:text-slate-400 font-medium">Head Balance:</span>
+                        <span className="font-mono font-bold text-teal-700 dark:text-teal-300 tabular-nums">
+                          {formatMoney(targetAcc.current_balance_cached)}
+                        </span>
+                      </div>
+                    )}
+
+                    {cat.description && (
+                      <p className="text-3xs text-slate-400 italic mb-2">
+                        {cat.description}
+                      </p>
+                    )}
+
+                    {/* Sub-categories */}
+                    {subcats.length > 0 && (
+                      <div className="mt-2.5 pt-2 border-t border-slate-200 dark:border-slate-800 space-y-1.5">
+                        <span className="text-3xs font-bold text-slate-400 uppercase tracking-wider block">
+                          Sub-categories ({subcats.length})
+                        </span>
+                        <div className="flex flex-wrap gap-1.5">
+                          {subcats.map(sub => (
+                            <span
+                              key={sub.id}
+                              className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 text-3xs font-medium border border-slate-200 dark:border-slate-700 shadow-2xs"
+                            >
+                              <span>{sub.name}</span>
+                              {canWrite && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteSavingHead(sub)}
+                                  title="Delete subcategory"
+                                  className="text-slate-400 hover:text-rose-500 font-bold ml-0.5"
+                                >
+                                  &times;
+                                </button>
+                              )}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
 
       {/* Add Modal */}
       {showAddModal && (
@@ -608,6 +893,203 @@ export const SavingsGoalsView: React.FC = () => {
                   className="px-4 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-500 rounded-lg shadow-xs"
                 >
                   Save Changes
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Add / Edit Saving Category & Sub-Category Modal */}
+      {showHeadModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 overflow-y-auto">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-md w-full p-6 shadow-2xl my-8">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800 mb-4">
+              <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                <PiggyBank className="w-5 h-5 text-teal-600 dark:text-teal-400" />
+                <span>
+                  {editingHeadCat
+                    ? 'Edit Saving Category'
+                    : headParentId
+                    ? 'Add Sub-Category'
+                    : 'Add New Saving Head'}
+                </span>
+              </h3>
+              <button
+                type="button"
+                onClick={() => setShowHeadModal(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveSavingHead} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  {headParentId ? 'Sub-Category Name' : 'Saving Head / Category Title'}
+                </label>
+                <input
+                  type="text"
+                  placeholder={headParentId ? "e.g. 5-Yr Sonali Bank DPS, Monthly Contribution" : "e.g. DPS Schemes, Emergency Reserve, Unity Fund-2026"}
+                  value={headName}
+                  onChange={(e) => setHeadName(e.target.value)}
+                  className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                  required
+                  autoFocus
+                />
+              </div>
+
+              {/* Parent Category Selector */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  Parent Saving Category (Optional)
+                </label>
+                <select
+                  value={headParentId || ''}
+                  onChange={(e) => setHeadParentId(e.target.value ? e.target.value : null)}
+                  className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                >
+                  <option value="">None (Top-Level Saving Head)</option>
+                  {rootSavingCategories
+                    .filter(c => c.id !== editingHeadCat?.id)
+                    .map(parent => (
+                      <option key={parent.id} value={parent.id}>
+                        {parent.name}
+                      </option>
+                    ))}
+                </select>
+                <p className="text-3xs text-slate-400 mt-1">
+                  Select a parent saving category to make this a nested sub-category.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  Description / Purpose (Optional)
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. Long-term asset accumulation, family contingency fund"
+                  value={headDescription}
+                  onChange={(e) => setHeadDescription(e.target.value)}
+                  className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                />
+              </div>
+
+              {/* Target Savings Account Linkage */}
+              <div className="p-3 rounded-xl bg-teal-50/70 dark:bg-teal-950/30 border border-teal-200 dark:border-teal-800/60 space-y-2.5">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-bold text-teal-800 dark:text-teal-300 flex items-center gap-1.5">
+                    <Landmark className="w-3.5 h-3.5 text-teal-600 dark:text-teal-400" />
+                    <span>Linked Asset Head Account</span>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setIsCreatingHeadAccount(!isCreatingHeadAccount)}
+                    className="text-2xs font-semibold text-teal-700 dark:text-teal-300 hover:underline flex items-center gap-0.5"
+                  >
+                    <Plus className="w-3 h-3" />
+                    <span>{isCreatingHeadAccount ? 'Select Existing' : 'New Account'}</span>
+                  </button>
+                </div>
+
+                {!isCreatingHeadAccount ? (
+                  <div>
+                    <select
+                      value={headTargetAcc}
+                      onChange={(e) => setHeadTargetAcc(e.target.value)}
+                      className="w-full px-3 py-2 text-xs rounded-lg border border-teal-300 dark:border-teal-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                      required
+                    >
+                      {savingsAccounts.length === 0 ? (
+                        <option value="">No savings asset account found. Click "New Account" above.</option>
+                      ) : (
+                        savingsAccounts.map(acc => (
+                          <option key={acc.id} value={acc.id}>
+                            {acc.name} ({acc.provider}) - {formatMoney(acc.current_balance_cached)}
+                          </option>
+                        ))
+                      )}
+                    </select>
+                    <p className="text-3xs text-teal-700 dark:text-teal-400 mt-1">
+                      Double-entry engine will debit this asset account when this saving category is funded.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="space-y-2 p-2 bg-white dark:bg-slate-900 rounded-lg border border-teal-200 dark:border-teal-800">
+                    <div>
+                      <label className="block text-3xs font-semibold text-slate-600 dark:text-slate-400 mb-0.5">
+                        New Account Name
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="e.g. Unity Fund-2026 Asset, DSPF (BAF) Account"
+                        value={newAccountName}
+                        onChange={(e) => setNewAccountName(e.target.value)}
+                        className="w-full px-2.5 py-1.5 text-xs rounded border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-3xs font-semibold text-slate-600 dark:text-slate-400 mb-0.5">
+                        Provider / Fund Manager
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="e.g. Dedicated Fund, BAF, Sonali Bank"
+                        value={newAccountProvider}
+                        onChange={(e) => setNewAccountProvider(e.target.value)}
+                        className="w-full px-2.5 py-1.5 text-xs rounded border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white"
+                      />
+                    </div>
+                    <div className="flex justify-end gap-1.5 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => setIsCreatingHeadAccount(false)}
+                        className="px-2 py-1 text-2xs text-slate-500 hover:text-slate-700"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleCreateSavingsAccountInline}
+                        className="px-3 py-1 text-2xs font-semibold rounded bg-teal-600 hover:bg-teal-500 text-white"
+                      >
+                        Save Account
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  Category Color
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="color"
+                    value={headColor}
+                    onChange={(e) => setHeadColor(e.target.value)}
+                    className="w-8 h-8 rounded border-0 cursor-pointer p-0"
+                  />
+                  <span className="text-xs font-mono text-slate-500 uppercase">{headColor}</span>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setShowHeadModal(false)}
+                  className="px-3 py-2 text-xs font-medium text-slate-600 dark:text-slate-400"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 text-xs font-semibold text-white bg-teal-600 hover:bg-teal-500 rounded-lg shadow-xs"
+                >
+                  {editingHeadCat ? 'Update Saving Category' : 'Save Saving Category'}
                 </button>
               </div>
             </form>

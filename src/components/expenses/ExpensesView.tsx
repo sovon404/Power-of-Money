@@ -59,6 +59,8 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
     amount: number;
     categoryName: string;
     categoryId: string;
+    parentCategoryId?: string | null;
+    parentCategoryName?: string;
     channelName: string;
     channelType: string;
     counterparty?: string;
@@ -133,6 +135,8 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
       ? debitAcc?.name 
       : (cat?.target_savings_account_id ? accounts.find(a => a.id === cat.target_savings_account_id)?.name : undefined);
 
+    const parentCat = cat?.parent_id ? categories.find(c => c.id === cat.parent_id) : undefined;
+
     const catName = cat?.name || (isSavingAllocation ? (targetSavingsHeadName || 'Saving Allocation') : 'Uncategorized Expense');
     const catId = cat?.id || (isSavingAllocation ? 'saving_head' : 'uncategorized');
     const catColor = cat?.color || (isSavingAllocation ? '#0d9488' : '#ef4444');
@@ -160,6 +164,8 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
       amount,
       categoryName: catName,
       categoryId: catId,
+      parentCategoryId: cat?.parent_id || null,
+      parentCategoryName: parentCat?.name,
       channelName: payerAcc?.name || 'Cash / Card',
       channelType: payerAcc?.account_type_id || 'cash',
       counterparty,
@@ -176,7 +182,11 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
   const filteredRows = expenseRows.filter(row => {
     if (outflowFilter === 'operating' && row.isSavingAllocation) return false;
     if (outflowFilter === 'savings' && !row.isSavingAllocation) return false;
-    if (selectedCategory !== 'all' && row.categoryId !== selectedCategory) return false;
+    if (selectedCategory !== 'all') {
+      const matchesDirect = row.categoryId === selectedCategory;
+      const matchesParent = row.parentCategoryId === selectedCategory;
+      if (!matchesDirect && !matchesParent) return false;
+    }
     if (selectedChannel !== 'all') {
       if (selectedChannel === 'cash' && row.channelType !== 'cash') return false;
       if (selectedChannel === 'card' && row.channelType !== 'credit_card') return false;
@@ -385,10 +395,22 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
             onChange={(e) => setSelectedCategory(e.target.value)}
             className="px-2.5 py-1.5 text-xs rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
           >
-            <option value="all">All 36 Categories</option>
-            {expenseCategories.map(c => (
-              <option key={c.id} value={c.id}>{c.name}</option>
-            ))}
+            <option value="all">All Categories & Sub-categories</option>
+            {expenseCategories
+              .filter(c => !c.parent_id)
+              .map(rootCat => {
+                const subs = expenseCategories.filter(c => c.parent_id === rootCat.id);
+                return (
+                  <React.Fragment key={rootCat.id}>
+                    <option value={rootCat.id}>{rootCat.name}</option>
+                    {subs.map(sub => (
+                      <option key={sub.id} value={sub.id}>
+                        &nbsp;&nbsp;↳ {sub.name}
+                      </option>
+                    ))}
+                  </React.Fragment>
+                );
+              })}
           </select>
 
           {/* Payment Channel Filter */}
@@ -507,6 +529,11 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
                       </td>
                       <td className="py-3 px-4 whitespace-nowrap">
                         <div className="flex flex-col gap-0.5">
+                          {row.parentCategoryName && (
+                            <span className="text-3xs text-slate-400 font-medium">
+                              {row.parentCategoryName} &rsaquo;
+                            </span>
+                          )}
                           <span className={`px-2 py-0.5 rounded-full text-2xs font-semibold w-fit ${
                             row.isSavingAllocation
                               ? 'bg-teal-50 dark:bg-teal-950 text-teal-700 dark:text-teal-300 border border-teal-200 dark:border-teal-800'

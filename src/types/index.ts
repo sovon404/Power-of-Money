@@ -155,6 +155,8 @@ export interface Category {
   workspace_id: string;
   name: string;
   type: 'income' | 'expense' | 'saving' | 'transfer_allocation';
+  parent_id?: string | null;
+  description?: string;
   income_type?: string;
   target_savings_account_id?: string;
   accounting_classification: 

@@ -46,8 +46,6 @@ export const WorkspaceProvider: React.FC<WorkspaceProviderProps> = ({ children, 
       const remote = await supabaseSync.pullRemoteWorkspaceData(currentWorkspace.id);
       if (remote) {
         db.hydrateFromSupabase(remote, currentWorkspace.id);
-        db.ensureDefaultAccountsForWorkspace(currentWorkspace.id);
-        db.ensureCategoriesForWorkspace(currentWorkspace.id);
       }
       setLastDbSyncTime(new Date().toLocaleTimeString());
       setRefreshKey(prev => prev + 1);
@@ -76,6 +74,7 @@ export const WorkspaceProvider: React.FC<WorkspaceProviderProps> = ({ children, 
 
         if (!isMounted) return;
 
+        // Ensure defaults only on first initialization
         db.ensureDefaultAccountsForWorkspace(workspace.id);
         db.ensureCategoriesForWorkspace(workspace.id);
         setCurrentWorkspace(workspace);
@@ -85,8 +84,6 @@ export const WorkspaceProvider: React.FC<WorkspaceProviderProps> = ({ children, 
           const remote = await supabaseSync.pullRemoteWorkspaceData(workspace.id);
           if (remote && isMounted) {
             db.hydrateFromSupabase(remote, workspace.id);
-            db.ensureDefaultAccountsForWorkspace(workspace.id);
-            db.ensureCategoriesForWorkspace(workspace.id);
             setLastDbSyncTime(new Date().toLocaleTimeString());
             setRefreshKey(prev => prev + 1);
           }

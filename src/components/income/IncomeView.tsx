@@ -75,6 +75,8 @@ export const IncomeView: React.FC = () => {
   const [headIncomeType, setHeadIncomeType] = useState('salary');
   const [headColor, setHeadColor] = useState('#10b981');
   const [headIcon, setHeadIcon] = useState('briefcase');
+  const [headParentId, setHeadParentId] = useState<string | null>(null);
+  const [headDesc, setHeadDesc] = useState('');
 
   // Manage Income Types Modal
   const [showManageTypesModal, setShowManageTypesModal] = useState(false);
@@ -103,6 +105,8 @@ export const IncomeView: React.FC = () => {
     categoryId?: string;
     categoryName: string;
     categoryColor: string;
+    parentCategoryId?: string | null;
+    parentCategoryName?: string;
     incomeTypeId: string;
     incomeTypeName: string;
     incomeTypeColor: string;
@@ -176,11 +180,12 @@ export const IncomeView: React.FC = () => {
 
       const catId = incomeCatLine?.category_id || creditLine?.category_id || debitLine?.category_id;
       const cat = catId ? (incomeCatMap.get(catId) || allCatMap.get(catId)) : undefined;
+      const parentCat = cat?.parent_id ? (incomeCatMap.get(cat.parent_id) || allCatMap.get(cat.parent_id)) : undefined;
       const depositAcc = debitLine ? accounts.find(a => a.id === debitLine.account_id) : undefined;
       const amount = incomeCatLine?.amount || creditLine?.amount || debitLine?.amount || 0;
 
       // Derive income type
-      let typeId = cat?.income_type;
+      let typeId = cat?.income_type || parentCat?.income_type;
       if (!typeId) {
         const catNameLower = (cat?.name || entry.memo || '').toLowerCase();
         if (catNameLower.includes('salary') || catNameLower.includes('bonus') || catNameLower.includes('allowance')) typeId = 'salary';
@@ -202,6 +207,8 @@ export const IncomeView: React.FC = () => {
         categoryId: catId,
         categoryName: cat?.name || 'General Income',
         categoryColor: cat?.color || '#10b981',
+        parentCategoryId: cat?.parent_id || null,
+        parentCategoryName: parentCat?.name,
         incomeTypeId: typeId,
         incomeTypeName: typeInfo?.name || typeId.replace('_', ' ').toUpperCase(),
         incomeTypeColor: typeInfo?.color || '#64748b',
@@ -268,13 +275,14 @@ export const IncomeView: React.FC = () => {
 
   // 3. Compute category (head) totals
   const categoryTotals = useMemo(() => {
-    const map: Record<string, { id: string; name: string; incomeType?: string; total: number; count: number; color: string }> = {};
+    const map: Record<string, { id: string; name: string; incomeType?: string; parentId?: string | null; total: number; count: number; color: string }> = {};
 
     incomeCategories.forEach(cat => {
       map[cat.id] = { 
         id: cat.id, 
         name: cat.name, 
         incomeType: cat.income_type, 
+        parentId: cat.parent_id || null,
         total: 0, 
         count: 0, 
         color: cat.color || '#10b981' 
@@ -288,7 +296,7 @@ export const IncomeView: React.FC = () => {
       } else {
         const key = rec.categoryName;
         if (!map[key]) {
-          map[key] = { id: key, name: rec.categoryName, total: 0, count: 0, color: rec.categoryColor };
+          map[key] = { id: key, name: rec.categoryName, parentId: rec.parentCategoryId || null, total: 0, count: 0, color: rec.categoryColor };
         }
         map[key].total += rec.amount;
         map[key].count += 1;
@@ -336,9 +344,11 @@ export const IncomeView: React.FC = () => {
         if (r.incomeTypeId !== filterIncomeType) return false;
       }
 
-      // Category filter
+      // Category filter (matches direct head or child subcategory)
       if (filterCategory !== 'all') {
-        if (r.categoryId !== filterCategory && r.categoryName !== filterCategory) return false;
+        const matchesCategory = r.categoryId === filterCategory || r.categoryName === filterCategory;
+        const matchesParent = r.parentCategoryId === filterCategory;
+        if (!matchesCategory && !matchesParent) return false;
       }
 
       // Search query
@@ -374,12 +384,15 @@ export const IncomeView: React.FC = () => {
   };
 
   // Add / Edit Income Head modal handlers
-  const openAddHeadModal = () => {
+  const openAddHeadModal = (parentId?: string | null) => {
     setEditingCategory(null);
     setHeadName('');
-    setHeadIncomeType(incomeTypes[0]?.id || 'salary');
-    setHeadColor('#10b981');
-    setHeadIcon('briefcase');
+    const parentCat = parentId ? incomeCategories.find(c => c.id === parentId) : null;
+    setHeadIncomeType(parentCat?.income_type || incomeTypes[0]?.id || 'salary');
+    setHeadColor(parentCat?.color || '#10b981');
+    setHeadIcon(parentCat?.icon || 'briefcase');
+    setHeadParentId(parentId || null);
+    setHeadDesc('');
     setShowHeadModal(true);
   };
 
@@ -389,6 +402,8 @@ export const IncomeView: React.FC = () => {
     setHeadIncomeType(cat.income_type || 'other');
     setHeadColor(cat.color || '#10b981');
     setHeadIcon(cat.icon || 'briefcase');
+    setHeadParentId(cat.parent_id || null);
+    setHeadDesc(cat.description || '');
     setShowHeadModal(true);
   };
 
@@ -403,6 +418,8 @@ export const IncomeView: React.FC = () => {
         income_type: headIncomeType,
         color: headColor,
         icon: headIcon,
+        parent_id: headParentId || undefined,
+        description: headDesc.trim() || undefined,
       };
       db.saveCategory(updated);
     } else {
@@ -413,6 +430,8 @@ export const IncomeView: React.FC = () => {
         type: 'income',
         income_type: headIncomeType,
         accounting_classification: 'income_operating',
+        parent_id: headParentId || undefined,
+        description: headDesc.trim() || undefined,
         icon: headIcon,
         color: headColor,
         is_seed: false,
@@ -543,7 +562,7 @@ export const IncomeView: React.FC = () => {
 
           {canWrite && (
             <button
-              onClick={openAddHeadModal}
+              onClick={() => openAddHeadModal()}
               className="flex items-center gap-1.5 px-3 py-2 bg-emerald-50 hover:bg-emerald-100 dark:bg-emerald-950/60 dark:hover:bg-emerald-900/60 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800 rounded-xl text-xs font-semibold transition-all shrink-0"
               title="Add a new income head linked to an income type"
             >
@@ -772,10 +791,22 @@ export const IncomeView: React.FC = () => {
               onChange={(e) => setFilterCategory(e.target.value)}
               className="w-full px-3 py-1.5 text-xs rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white outline-hidden focus:ring-2 focus:ring-emerald-500"
             >
-              <option value="all">All Income Heads</option>
-              {incomeCategories.map(cat => (
-                <option key={cat.id} value={cat.id}>{cat.name}</option>
-              ))}
+              <option value="all">All Heads & Sub-categories</option>
+              {incomeCategories
+                .filter(c => !c.parent_id)
+                .map(rootCat => {
+                  const subs = incomeCategories.filter(c => c.parent_id === rootCat.id);
+                  return (
+                    <React.Fragment key={rootCat.id}>
+                      <option value={rootCat.id}>{rootCat.name}</option>
+                      {subs.map(sub => (
+                        <option key={sub.id} value={sub.id}>
+                          &nbsp;&nbsp;↳ {sub.name}
+                        </option>
+                      ))}
+                    </React.Fragment>
+                  );
+                })}
             </select>
           </div>
 
@@ -863,12 +894,19 @@ export const IncomeView: React.FC = () => {
                       )}
                     </td>
                     <td className="py-3 px-3 whitespace-nowrap">
-                      <span 
-                        className="px-2 py-0.5 rounded-full text-2xs font-semibold text-white inline-block shadow-2xs"
-                        style={{ backgroundColor: rec.categoryColor }}
-                      >
-                        {rec.categoryName}
-                      </span>
+                      <div>
+                        {rec.parentCategoryName && (
+                          <span className="text-3xs text-slate-400 block mb-0.5 font-medium">
+                            {rec.parentCategoryName} &rsaquo;
+                          </span>
+                        )}
+                        <span 
+                          className="px-2 py-0.5 rounded-full text-2xs font-semibold text-white inline-block shadow-2xs"
+                          style={{ backgroundColor: rec.categoryColor }}
+                        >
+                          {rec.categoryName}
+                        </span>
+                      </div>
                     </td>
                     <td className="py-3 px-3 whitespace-nowrap">
                       <span 
@@ -947,67 +985,121 @@ export const IncomeView: React.FC = () => {
             {categoryTotals.filter(c => c.total > 0).length === 0 ? (
               <div className="text-center py-8 text-slate-400">
                 <p className="text-xs font-medium">No revenue streams active yet.</p>
-                <span className="text-2xs text-slate-500">Record an income transaction above to see breakdown bars.</span>
+                <span className="text-2xs text-slate-500">Record an income transaction above or click &ldquo;+ Add Income Head&rdquo; to configure revenue streams.</span>
               </div>
             ) : (
               <div className="space-y-4">
-                {categoryTotals.filter(c => c.total > 0).map(stream => {
-                  const pct = totalInflow > 0 ? (stream.total / totalInflow) * 100 : 0;
-                  const catObj = incomeCategories.find(c => c.id === stream.id);
-                  const typeObj = stream.incomeType ? incomeTypeMap.get(stream.incomeType) : undefined;
-                  return (
-                    <div 
-                      key={stream.name}
-                      className="p-3.5 rounded-xl border border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950/50 group hover:border-slate-300 dark:hover:border-slate-700 transition-colors"
-                    >
-                      <div className="flex items-center justify-between mb-2">
-                        <div className="flex items-center gap-2">
-                          <span 
-                            className="w-3 h-3 rounded-full shrink-0" 
-                            style={{ backgroundColor: stream.color }}
-                          />
-                          <span className="text-xs font-bold text-slate-900 dark:text-white">
-                            {stream.name}
-                          </span>
-                          {typeObj && (
+                {categoryTotals
+                  .filter(c => !c.parentId && (c.total > 0 || categoryTotals.some(sub => sub.parentId === c.id && sub.total > 0)))
+                  .map(stream => {
+                    const subStreams = categoryTotals.filter(c => c.parentId === stream.id);
+                    const subTotalSum = subStreams.reduce((sum, s) => sum + s.total, 0);
+                    const combinedTotal = stream.total + subTotalSum;
+                    const pct = totalInflow > 0 ? (combinedTotal / totalInflow) * 100 : 0;
+                    const catObj = incomeCategories.find(c => c.id === stream.id);
+                    const typeObj = stream.incomeType ? incomeTypeMap.get(stream.incomeType) : undefined;
+
+                    return (
+                      <div 
+                        key={stream.id || stream.name}
+                        className="p-3.5 rounded-xl border border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950/50 group hover:border-slate-300 dark:hover:border-slate-700 transition-colors"
+                      >
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-2 flex-wrap">
                             <span 
-                              className="px-1.5 py-0.2 rounded text-3xs font-medium text-white"
-                              style={{ backgroundColor: typeObj.color }}
-                            >
-                              {typeObj.name}
+                              className="w-3 h-3 rounded-full shrink-0" 
+                              style={{ backgroundColor: stream.color }}
+                            />
+                            <span className="text-xs font-bold text-slate-900 dark:text-white">
+                              {stream.name}
                             </span>
-                          )}
-                          <span className="text-2xs text-slate-400">
-                            ({stream.count} tx)
-                          </span>
-                          {catObj && (
-                            <button
-                              onClick={() => openEditHeadModal(catObj)}
-                              className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-opacity p-0.5"
-                              title="Edit Head & Type"
-                            >
-                              <Edit2 className="w-3 h-3" />
-                            </button>
-                          )}
+                            {typeObj && (
+                              <span 
+                                className="px-1.5 py-0.2 rounded text-3xs font-medium text-white"
+                                style={{ backgroundColor: typeObj.color }}
+                              >
+                                {typeObj.name}
+                              </span>
+                            )}
+                            <span className="text-2xs text-slate-400">
+                              ({stream.count + subStreams.reduce((cnt, s) => cnt + s.count, 0)} tx)
+                            </span>
+                            {catObj && (
+                              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <button
+                                  type="button"
+                                  onClick={() => openAddHeadModal(catObj.id)}
+                                  className="text-3xs font-semibold px-1.5 py-0.5 rounded bg-emerald-100 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-200 transition-colors"
+                                  title="Add sub-category under this head"
+                                >
+                                  + Sub
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => openEditHeadModal(catObj)}
+                                  className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-0.5"
+                                  title="Edit Head & Type"
+                                >
+                                  <Edit2 className="w-3 h-3" />
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                          <div className="text-right">
+                            <span className="text-sm font-bold font-mono text-slate-900 dark:text-white tabular-nums">
+                              {formatMoney(combinedTotal)}
+                            </span>
+                            <span className="text-2xs font-mono font-semibold text-emerald-600 dark:text-emerald-400 ml-2">
+                              {pct.toFixed(1)}%
+                            </span>
+                          </div>
                         </div>
-                        <div className="text-right">
-                          <span className="text-sm font-bold font-mono text-slate-900 dark:text-white tabular-nums">
-                            {formatMoney(stream.total)}
-                          </span>
-                          <span className="text-2xs font-mono font-semibold text-emerald-600 dark:text-emerald-400 ml-2">
-                            {pct.toFixed(1)}%
-                          </span>
+                        <div className="w-full h-2 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden">
+                          <div 
+                            className="h-full rounded-full transition-all duration-500"
+                            style={{ width: `${Math.max(pct, combinedTotal > 0 ? 2 : 0)}%`, backgroundColor: stream.color }}
+                          />
                         </div>
+
+                        {/* Nested Subcategories */}
+                        {subStreams.length > 0 && (
+                          <div className="mt-3 pt-2.5 border-t border-slate-200/60 dark:border-slate-800/80 space-y-1.5 pl-2">
+                            <div className="text-3xs uppercase tracking-wider font-bold text-slate-400">
+                              Sub-Categories ({subStreams.length})
+                            </div>
+                            {subStreams.map(sub => {
+                              const subPct = totalInflow > 0 ? (sub.total / totalInflow) * 100 : 0;
+                              const subCatObj = incomeCategories.find(c => c.id === sub.id);
+                              return (
+                                <div key={sub.id} className="flex items-center justify-between text-2xs py-1 px-2 rounded-lg hover:bg-white dark:hover:bg-slate-900/50">
+                                  <div className="flex items-center gap-1.5 min-w-0">
+                                    <span className="text-slate-400 font-mono">↳</span>
+                                    <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: sub.color }} />
+                                    <span className="font-semibold text-slate-700 dark:text-slate-200 truncate">{sub.name}</span>
+                                    <span className="text-3xs text-slate-400">({sub.count} tx)</span>
+                                    {subCatObj && (
+                                      <button
+                                        type="button"
+                                        onClick={() => openEditHeadModal(subCatObj)}
+                                        className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 ml-1 p-0.5"
+                                        title="Edit Subcategory"
+                                      >
+                                        <Edit2 className="w-2.5 h-2.5" />
+                                      </button>
+                                    )}
+                                  </div>
+                                  <div className="text-right font-mono font-medium text-slate-800 dark:text-slate-300">
+                                    {formatMoney(sub.total)}
+                                    <span className="text-3xs text-slate-400 ml-1.5">({subPct.toFixed(1)}%)</span>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
                       </div>
-                      <div className="w-full h-2 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden">
-                        <div 
-                          className="h-full rounded-full transition-all duration-500"
-                          style={{ width: `${Math.max(pct, 2)}%`, backgroundColor: stream.color }}
-                        />
-                      </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
               </div>
             )}
           </div>
@@ -1141,6 +1233,50 @@ export const IncomeView: React.FC = () => {
                 <p className="text-3xs text-slate-400 mt-1">
                   Associates this head with its macro stream (Salary, Remote/Freelance, Land Mortgage, etc.)
                 </p>
+              </div>
+
+              <div>
+                <label className="block text-2xs font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-wider mb-1">
+                  Parent Category (Optional)
+                </label>
+                <select
+                  value={headParentId || ''}
+                  onChange={(e) => {
+                    const pid = e.target.value || null;
+                    setHeadParentId(pid);
+                    if (pid) {
+                      const p = incomeCategories.find(c => c.id === pid);
+                      if (p?.income_type) setHeadIncomeType(p.income_type);
+                      if (p?.color) setHeadColor(p.color);
+                    }
+                  }}
+                  className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white outline-hidden focus:ring-2 focus:ring-emerald-500"
+                >
+                  <option value="">None (Top-Level Income Head)</option>
+                  {incomeCategories
+                    .filter(c => !c.parent_id && c.id !== editingCategory?.id)
+                    .map(c => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                </select>
+                <p className="text-3xs text-slate-400 mt-1">
+                  Nest this head as a sub-category under a parent (e.g. Salary &gt; Basic Pay, Bonus).
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-2xs font-semibold text-slate-600 dark:text-slate-400 uppercase tracking-wider mb-1">
+                  Description / Note (Optional)
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. Primary salary account payout, contract bonuses"
+                  value={headDesc}
+                  onChange={(e) => setHeadDesc(e.target.value)}
+                  className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-white outline-hidden focus:ring-2 focus:ring-emerald-500"
+                />
               </div>
 
               <div>

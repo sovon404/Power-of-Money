@@ -15,13 +15,12 @@ const PORT = parseInt(process.env.PORT || '3000', 10);
 
 app.use(express.json({ limit: '20mb' }));
 
-// Shared server-side Gemini AI client
-const geminiApiKey = process.env.GEMINI_API_KEY;
-let aiClient: GoogleGenAI | null = null;
-
-if (geminiApiKey) {
-  aiClient = new GoogleGenAI({
-    apiKey: geminiApiKey,
+// Server-side Gemini AI client helper
+function getAiClient(): GoogleGenAI | null {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) return null;
+  return new GoogleGenAI({
+    apiKey,
     httpOptions: {
       headers: {
         'User-Agent': 'aistudio-build',
@@ -91,6 +90,7 @@ app.get('/api/db-check', async (_req: Request, res: Response) => {
 // 1. Receipt OCR & Transaction Extraction
 app.post('/api/gemini/analyze-receipt', async (req: Request, res: Response): Promise<void> => {
   try {
+    const aiClient = getAiClient();
     if (!aiClient) {
       res.status(503).json({
         error: 'Gemini API key is not configured on the server. Please check the Secrets panel.',
@@ -169,6 +169,7 @@ Return structured JSON.`;
 // 2. Financial Insights & Health Advisory
 app.post('/api/gemini/financial-insights', async (req: Request, res: Response): Promise<void> => {
   try {
+    const aiClient = getAiClient();
     if (!aiClient) {
       res.status(503).json({
         error: 'Gemini API key is not configured on the server. Please check the Secrets panel.',
@@ -229,6 +230,7 @@ Do not recommend taking unnecessary high-risk loans. All numbers should referenc
 // 3. Ask Financial Advisor
 app.post('/api/gemini/ask-advisor', async (req: Request, res: Response): Promise<void> => {
   try {
+    const aiClient = getAiClient();
     if (!aiClient) {
       res.status(503).json({
         error: 'Gemini API key is not configured on the server.',

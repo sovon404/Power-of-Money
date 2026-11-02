@@ -50,16 +50,30 @@ export const SettingsView: React.FC = () => {
   const [isCreatingHead, setIsCreatingHead] = useState(false);
   const [newHeadName, setNewHeadName] = useState('');
   const [newHeadProvider, setNewHeadProvider] = useState('Savings Fund');
+  const [catParentId, setCatParentId] = useState<string | null>(null);
+  const [catDescription, setCatDescription] = useState('');
 
   const [copiedMigration, setCopiedMigration] = useState(false);
 
-  const openAddCategoryModal = () => {
+  const openAddCategoryModal = (parentId?: string | null) => {
     setEditingCategory(null);
     setCatName('');
-    setCatType('expense');
-    setCatClassification('expense_operating');
-    setCatTargetSavingsAcc(savingsAccounts[0]?.id || '');
-    setCatColor('#0284c7');
+    setCatDescription('');
+    setCatParentId(parentId || null);
+    if (parentId) {
+      const parent = categories.find(c => c.id === parentId);
+      if (parent) {
+        setCatType(parent.type === 'transfer_allocation' ? 'saving' : parent.type);
+        setCatClassification(parent.accounting_classification);
+        setCatTargetSavingsAcc(parent.target_savings_account_id || '');
+        setCatColor(parent.color || '#0284c7');
+      }
+    } else {
+      setCatType('expense');
+      setCatClassification('expense_operating');
+      setCatTargetSavingsAcc(savingsAccounts[0]?.id || '');
+      setCatColor('#0284c7');
+    }
     setIsCreatingHead(false);
     setShowAddCatModal(true);
   };
@@ -67,6 +81,8 @@ export const SettingsView: React.FC = () => {
   const openEditCategoryModal = (cat: Category) => {
     setEditingCategory(cat);
     setCatName(cat.name);
+    setCatDescription(cat.description || '');
+    setCatParentId(cat.parent_id || null);
     setCatType(cat.type === 'transfer_allocation' ? 'saving' : cat.type);
     setCatClassification(cat.accounting_classification || (cat.type === 'saving' ? 'asset_savings' : 'expense_operating'));
     setCatTargetSavingsAcc(cat.target_savings_account_id || savingsAccounts[0]?.id || '');
@@ -111,6 +127,8 @@ export const SettingsView: React.FC = () => {
       const updated: Category = {
         ...editingCategory,
         name: catName.trim(),
+        description: catDescription.trim() || undefined,
+        parent_id: catParentId || undefined,
         type: catType,
         accounting_classification: (catType === 'saving' ? (catClassification || 'asset_savings') : catClassification) as any,
         target_savings_account_id: catType === 'saving' ? (catTargetSavingsAcc || undefined) : undefined,
@@ -122,6 +140,8 @@ export const SettingsView: React.FC = () => {
         id: toUuid(`cat_${workspaceId}_${Date.now()}`),
         workspace_id: workspaceId,
         name: catName.trim(),
+        description: catDescription.trim() || undefined,
+        parent_id: catParentId || undefined,
         type: catType,
         accounting_classification: (catType === 'saving' ? 'asset_savings' : catClassification) as any,
         target_savings_account_id: catType === 'saving' ? (catTargetSavingsAcc || undefined) : undefined,
@@ -137,6 +157,8 @@ export const SettingsView: React.FC = () => {
     refreshData();
     setShowAddCatModal(false);
     setCatName('');
+    setCatDescription('');
+    setCatParentId(null);
   };
 
   const handleToggleArchive = (cat: Category) => {
@@ -187,7 +209,8 @@ export const SettingsView: React.FC = () => {
 11. 20261101000011_income_types_and_dashboard_cockpit.sql
 12. 20261102000012_savings_category_and_heads.sql
 13. 20261102000013_period_end_date_and_enhancements.sql
-14. 20261102000014_single_user_demolish_workspaces.sql`;
+14. 20261102000014_single_user_demolish_workspaces.sql
+15. 20261102000015_categories_subcategories_and_saving_heads.sql`;
     navigator.clipboard.writeText(text);
     setCopiedMigration(true);
     setTimeout(() => setCopiedMigration(false), 2000);
@@ -291,7 +314,7 @@ export const SettingsView: React.FC = () => {
 
               {canWrite && (
                 <button
-                  onClick={openAddCategoryModal}
+                  onClick={() => openAddCategoryModal()}
                   className="flex items-center gap-1 px-3 py-1.5 text-xs font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white shadow-xs shrink-0"
                 >
                   <Plus className="w-3.5 h-3.5" />
@@ -301,69 +324,120 @@ export const SettingsView: React.FC = () => {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-            {filteredCategories.map(cat => {
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
+            {filteredCategories.filter(c => !c.parent_id).map(cat => {
               const isSaving = cat.type === 'saving' || cat.accounting_classification === 'asset_savings';
               const targetAcc = cat.target_savings_account_id ? accounts.find(a => a.id === cat.target_savings_account_id) : undefined;
+              const subcats = categories.filter(c => c.parent_id === cat.id);
+
               return (
                 <div
                   key={cat.id}
-                  className="p-3 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs flex items-center justify-between hover:border-slate-300 dark:hover:border-slate-700 transition-colors group"
+                  className="p-3.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col justify-between hover:border-slate-300 dark:hover:border-slate-700 transition-colors group"
                 >
-                  <div className="flex items-center gap-2.5 truncate min-w-0">
-                    <div
-                      className="w-3 h-3 rounded-full shrink-0"
-                      style={{ backgroundColor: cat.color || (isSaving ? '#0d9488' : '#0284c7') }}
-                    />
-                    <div className="truncate min-w-0">
-                      <div className="flex items-center gap-1.5">
-                        <span className="text-xs font-semibold text-slate-900 dark:text-white truncate block">
-                          {cat.name}
-                        </span>
-                        {isSaving && (
-                          <span className="text-3xs font-bold px-1.5 py-0.2 rounded-full bg-teal-50 dark:bg-teal-950 text-teal-600 dark:text-teal-400 border border-teal-200 dark:border-teal-800 shrink-0">
-                            Saving
-                          </span>
-                        )}
-                        {cat.type === 'income' && (
-                          <span className="text-3xs font-bold px-1.5 py-0.2 rounded-full bg-emerald-50 dark:bg-emerald-950 text-emerald-600 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800 shrink-0">
-                            Income
-                          </span>
-                        )}
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center gap-2 truncate min-w-0">
+                        <div
+                          className="w-3.5 h-3.5 rounded-full shrink-0"
+                          style={{ backgroundColor: cat.color || (isSaving ? '#0d9488' : '#0284c7') }}
+                        />
+                        <div className="truncate min-w-0">
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-xs font-bold text-slate-900 dark:text-white truncate block">
+                              {cat.name}
+                            </span>
+                            {isSaving && (
+                              <span className="text-3xs font-bold px-1.5 py-0.2 rounded-full bg-teal-50 dark:bg-teal-950 text-teal-600 dark:text-teal-400 border border-teal-200 dark:border-teal-800 shrink-0">
+                                Saving Head
+                              </span>
+                            )}
+                            {cat.type === 'income' && (
+                              <span className="text-3xs font-bold px-1.5 py-0.2 rounded-full bg-emerald-50 dark:bg-emerald-950 text-emerald-600 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800 shrink-0">
+                                Income
+                              </span>
+                            )}
+                          </div>
+                        </div>
                       </div>
-                      <span className="text-3xs text-slate-400 capitalize block truncate">
-                        {isSaving && targetAcc 
-                          ? `→ ${targetAcc.name}` 
-                          : cat.accounting_classification?.replace('_', ' ') || cat.type}
-                      </span>
-                    </div>
-                  </div>
 
-                  {canWrite && (
-                    <div className="flex items-center gap-1 shrink-0 opacity-80 group-hover:opacity-100 transition-opacity">
-                      <button
-                        onClick={() => openEditCategoryModal(cat)}
-                        title="Edit category"
-                        className="p-1 rounded text-slate-400 hover:text-emerald-600 dark:hover:text-emerald-400"
-                      >
-                        <Edit2 className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        onClick={() => handleToggleArchive(cat)}
-                        title={cat.is_archived ? "Unarchive category" : "Archive category"}
-                        className="p-1 rounded text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
-                      >
-                        <Archive className="w-3.5 h-3.5" />
-                      </button>
-                      <button
-                        onClick={() => handleDeleteCategory(cat)}
-                        title="Delete category"
-                        className="p-1 rounded text-slate-400 hover:text-rose-600 dark:hover:text-rose-400"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                      {canWrite && (
+                        <div className="flex items-center gap-1 shrink-0 opacity-80 group-hover:opacity-100 transition-opacity">
+                          <button
+                            type="button"
+                            onClick={() => openAddCategoryModal(cat.id)}
+                            title="Add sub-category under this category"
+                            className="px-1.5 py-0.5 rounded text-3xs font-semibold bg-emerald-50 dark:bg-emerald-950 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 flex items-center gap-0.5"
+                          >
+                            <Plus className="w-2.5 h-2.5" />
+                            <span>+ Sub</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => openEditCategoryModal(cat)}
+                            title="Edit category"
+                            className="p-1 rounded text-slate-400 hover:text-emerald-600 dark:hover:text-emerald-400"
+                          >
+                            <Edit2 className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleToggleArchive(cat)}
+                            title={cat.is_archived ? "Unarchive category" : "Archive category"}
+                            className="p-1 rounded text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                          >
+                            <Archive className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteCategory(cat)}
+                            title="Delete category"
+                            className="p-1 rounded text-slate-400 hover:text-rose-600 dark:hover:text-rose-400"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      )}
                     </div>
-                  )}
+
+                    <div className="text-3xs text-slate-400 mb-2 truncate">
+                      {isSaving && targetAcc 
+                        ? `Linked Asset Head: ${targetAcc.name}` 
+                        : cat.accounting_classification?.replace('_', ' ') || cat.type}
+                    </div>
+
+                    {/* Nested Subcategories */}
+                    {subcats.length > 0 && (
+                      <div className="mt-2.5 pt-2 border-t border-slate-100 dark:border-slate-800 space-y-1.5">
+                        <div className="text-3xs font-bold text-slate-400 uppercase tracking-wider flex items-center justify-between">
+                          <span>Sub-categories ({subcats.length})</span>
+                        </div>
+                        <div className="flex flex-wrap gap-1.5">
+                          {subcats.map(sub => (
+                            <span
+                              key={sub.id}
+                              className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-3xs font-medium border border-slate-200 dark:border-slate-700"
+                            >
+                              <span>{sub.name}</span>
+                              {canWrite && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleDeleteCategory(sub);
+                                  }}
+                                  title="Delete subcategory"
+                                  className="text-slate-400 hover:text-rose-500 font-bold ml-0.5"
+                                >
+                                  &times;
+                                </button>
+                              )}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
               );
             })}
@@ -516,6 +590,43 @@ export const SettingsView: React.FC = () => {
                     )}
                   </select>
                 </div>
+              </div>
+
+              {/* Optional Parent Category for Sub-Categories */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  Parent Category (Optional - select to create a Sub-Category)
+                </label>
+                <select
+                  value={catParentId || ''}
+                  onChange={(e) => setCatParentId(e.target.value ? e.target.value : null)}
+                  className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                >
+                  <option value="">None (Top-Level Category)</option>
+                  {categories
+                    .filter(c => !c.parent_id && c.id !== editingCategory?.id && (catType === 'saving' ? (c.type === 'saving' || c.accounting_classification === 'asset_savings') : c.type === catType))
+                    .map(parent => (
+                      <option key={parent.id} value={parent.id}>
+                        {parent.name} ({parent.type})
+                      </option>
+                    ))}
+                </select>
+                <p className="text-3xs text-slate-400 mt-1">
+                  Select a parent to nest this as a subcategory, or leave as Top-Level.
+                </p>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  Description / Purpose (Optional)
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. Monthly DPS scheme installment, Client freelance fee"
+                  value={catDescription}
+                  onChange={(e) => setCatDescription(e.target.value)}
+                  className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
+                />
               </div>
 
               {/* Dynamic Target Savings Head Selection when Category Type is Saving */}

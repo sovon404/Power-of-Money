@@ -51,12 +51,6 @@ export const AccountsLiveCockpit: React.FC<AccountsLiveCockpitProps> = ({
   const { currentWorkspace, formatMoney, refreshData, canWrite, isSyncingWithDb, lastDbSyncTime, syncFromDatabase } = useWorkspace();
   const workspaceId = currentWorkspace?.id || '';
 
-  // Ensure default core foundational accounts exist
-  useEffect(() => {
-    if (workspaceId) {
-      db.ensureDefaultAccountsForWorkspace(workspaceId);
-    }
-  }, [workspaceId]);
 
   // 1. Fetch real active accounts from database
   const allAccounts = db.getAccounts(workspaceId).filter(a => !a.is_archived);
