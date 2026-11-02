@@ -18,6 +18,7 @@ import { useWorkspace } from '../../context/WorkspaceContext';
 import { db } from '../../services/db';
 import { JournalEntry, FinancialAccount, Category } from '../../types';
 import { NewTransactionModal } from '../modals/NewTransactionModal';
+import { toUuid } from '../../lib/uuid';
 
 interface ExpensesViewProps {
   onOpenAiScan?: () => void;
@@ -62,6 +63,8 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
 
   const expenseRows: ExpenseRow[] = [];
   const categoryTotals: Record<string, { name: string; total: number; count: number; color: string }> = {};
+  const defaultIncomeAccUuid = toUuid(`acc_income_earned_${workspaceId}`);
+  const defaultExpenseAccUuid = toUuid(`acc_expense_operating_${workspaceId}`);
 
   journalEntries.forEach(entry => {
     if (entry.status !== 'posted') return;
@@ -70,43 +73,90 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
     if (dateFilter === 'this_month' && !entry.entry_date.startsWith(currentMonthStr)) return;
     if (dateFilter === 'last_month' && !entry.entry_date.startsWith(lastMonthStr)) return;
 
-    // Find paying account and expense category
-    let payerAcc: FinancialAccount | undefined;
-    entry.lines?.forEach(line => {
-      if (line.line_type === 'credit' && line.account_id) {
-        payerAcc = accounts.find(a => a.id === line.account_id);
-      }
+    // Strictly skip transfers and opening balances
+    if (entry.source_type === 'transfer' || entry.source_type === 'opening_balance') return;
+
+    const lines = entry.lines || [];
+    if (lines.length === 0) return;
+
+    // 1. Check if this entry represents an INCOME transaction (must never appear in Central Expense Hub)
+    const hasIncomeCat = lines.some(l => {
+      if (!l.category_id) return false;
+      const c = categories.find(cat => cat.id === l.category_id);
+      return c?.type === 'income' || Boolean(c?.income_type);
     });
 
-    entry.lines?.forEach(line => {
-      if (line.line_type === 'debit' && line.category_id) {
-        const cat = categories.find(c => c.id === line.category_id);
-        const catName = cat?.name || 'Uncategorized Expense';
+    const isCreditToIncomeAcc = lines.some(l => {
+      if (l.line_type !== 'credit') return false;
+      if (l.account_id === defaultIncomeAccUuid) return true;
+      const acc = accounts.find(a => a.id === l.account_id);
+      return (
+        acc?.account_type_id?.startsWith('income') ||
+        acc?.name?.toLowerCase().includes('earned revenue') ||
+        acc?.name?.toLowerCase().includes('income')
+      );
+    });
 
-        if (!categoryTotals[line.category_id]) {
-          categoryTotals[line.category_id] = {
-            name: catName,
-            total: 0,
-            count: 0,
-            color: cat?.color || '#ef4444',
-          };
-        }
-        categoryTotals[line.category_id].total += line.amount;
-        categoryTotals[line.category_id].count += 1;
+    if (hasIncomeCat || isCreditToIncomeAcc) {
+      // This is an income transaction, exclude from Expense view completely
+      return;
+    }
 
-        expenseRows.push({
-          id: line.id,
-          entryId: entry.id,
-          date: entry.entry_date,
-          memo: line.memo || entry.memo,
-          amount: line.amount,
-          categoryName: catName,
-          categoryId: line.category_id,
-          channelName: payerAcc?.name || 'Cash / Card',
-          channelType: payerAcc?.account_type_id || 'cash',
-          counterparty: line.counterparty,
-        });
+    // 2. Identify paying account (credit line on asset/card account)
+    const creditLine = lines.find(l => {
+      if (l.line_type !== 'credit') return false;
+      const acc = accounts.find(a => a.id === l.account_id);
+      return acc && ['cash', 'bank', 'mfs', 'credit_card', 'savings_dps', 'investment', 'loan_payable'].includes(acc.account_type_id);
+    }) || lines.find(l => l.line_type === 'credit');
+
+    const payerAcc = creditLine?.account_id ? accounts.find(a => a.id === creditLine.account_id) : undefined;
+
+    // 3. Identify expense debit line (debit to expense account or category)
+    const expenseDebitLine = lines.find(l => {
+      if (l.line_type !== 'debit') return false;
+      if (l.category_id) {
+        const cat = categories.find(c => c.id === l.category_id);
+        return cat?.type === 'expense';
       }
+      return l.account_id === defaultExpenseAccUuid;
+    }) || lines.find(l => l.line_type === 'debit');
+
+    // 4. Resolve category
+    const linkedCatId = expenseDebitLine?.category_id || creditLine?.category_id || lines.find(l => l.category_id)?.category_id;
+    const cat = linkedCatId ? categories.find(c => c.id === linkedCatId) : undefined;
+
+    // Double check: if linked category is income, exclude
+    if (cat && cat.type === 'income') return;
+
+    const catName = cat?.name || 'Uncategorized Expense';
+    const catId = cat?.id || 'uncategorized';
+    const catColor = cat?.color || '#ef4444';
+    const amount = expenseDebitLine?.amount || creditLine?.amount || lines[0]?.amount || 0;
+    const memo = expenseDebitLine?.memo || entry.memo || 'Expense';
+    const counterparty = expenseDebitLine?.counterparty || creditLine?.counterparty || lines.find(l => l.counterparty)?.counterparty;
+
+    if (!categoryTotals[catId]) {
+      categoryTotals[catId] = {
+        name: catName,
+        total: 0,
+        count: 0,
+        color: catColor,
+      };
+    }
+    categoryTotals[catId].total += amount;
+    categoryTotals[catId].count += 1;
+
+    expenseRows.push({
+      id: expenseDebitLine?.id || entry.id,
+      entryId: entry.id,
+      date: entry.entry_date,
+      memo,
+      amount,
+      categoryName: catName,
+      categoryId: catId,
+      channelName: payerAcc?.name || 'Cash / Card',
+      channelType: payerAcc?.account_type_id || 'cash',
+      counterparty,
     });
   });
 

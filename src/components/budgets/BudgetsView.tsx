@@ -70,9 +70,13 @@ export const BudgetsView: React.FC = () => {
 
   journalEntries.forEach(entry => {
     if (entry.status === 'posted' && entry.entry_date.startsWith(currentMonthStr)) {
+      if (entry.source_type === 'transfer' || entry.source_type === 'opening_balance') return;
       entry.lines?.forEach(line => {
         if (line.category_id && line.line_type === 'debit') {
-          categorySpendingMap[line.category_id] = (categorySpendingMap[line.category_id] || 0) + line.amount;
+          const cat = categories.find(c => c.id === line.category_id);
+          if (cat?.type === 'expense') {
+            categorySpendingMap[line.category_id] = (categorySpendingMap[line.category_id] || 0) + line.amount;
+          }
         }
       });
     }

@@ -88,7 +88,7 @@ export const AccountsLiveCockpit: React.FC<AccountsLiveCockpitProps> = ({
   const defaultIncomeAccUuid = toUuid(`acc_income_earned_${workspaceId}`);
 
   const totalEarnedRevenue = journalEntries
-    .filter(e => e.status === 'posted')
+    .filter(e => e.status === 'posted' && e.source_type !== 'transfer' && e.source_type !== 'opening_balance')
     .reduce((sum, e) => {
       const incomeLine = e.lines?.find(l => 
         (l.line_type === 'credit' && (

@@ -128,6 +128,14 @@ export const IncomeView: React.FC = () => {
 
     journalEntries.forEach(entry => {
       if (entry.status !== 'posted') return;
+      if (entry.source_type === 'transfer' || entry.source_type === 'opening_balance') return;
+
+      const hasExpenseCat = entry.lines?.some(l => {
+        if (!l.category_id) return false;
+        const c = allCatMap.get(l.category_id);
+        return c?.type === 'expense';
+      });
+      if (hasExpenseCat) return;
 
       // Find any line with an income category, or an income account line
       const incomeCatLine = entry.lines?.find(l => l.category_id && incomeCatMap.has(l.category_id));

@@ -27,6 +27,7 @@ import {
 import { useWorkspace } from '../../context/WorkspaceContext';
 import { db } from '../../services/db';
 import { JournalEntry } from '../../types';
+import { toUuid } from '../../lib/uuid';
 
 export const ReportBuilderView: React.FC = () => {
   const { currentWorkspace, formatMoney } = useWorkspace();
@@ -110,6 +111,8 @@ export const ReportBuilderView: React.FC = () => {
 
   const statementRows: StatementRow[] = useMemo(() => {
     const rows: StatementRow[] = [];
+    const defaultIncomeAccUuid = toUuid(`acc_income_earned_${workspaceId}`);
+    const defaultExpenseAccUuid = toUuid(`acc_expense_operating_${workspaceId}`);
 
     entries.forEach(entry => {
       if (entry.status !== 'posted') return;
@@ -121,67 +124,264 @@ export const ReportBuilderView: React.FC = () => {
       if (dateRangeBounds.start && entry.entry_date < dateRangeBounds.start) return;
       if (dateRangeBounds.end && entry.entry_date > dateRangeBounds.end) return;
 
-      entry.lines?.forEach((line, lineIdx) => {
-        const cat = line.category_id ? categoryMap.get(line.category_id) : undefined;
-        const acc = accountMap.get(line.account_id);
+      const lines = entry.lines || [];
+      if (lines.length === 0) return;
 
-        // Filter by specific account if in 'account' statement mode
-        if (statementType === 'account' && selectedAccountId) {
-          if (line.account_id !== selectedAccountId) return;
-        }
+      // --- CASE 1: SPECIFIC ACCOUNT STATEMENT MODE ---
+      if (statementType === 'account' && selectedAccountId) {
+        const accountLines = lines.filter(l => l.account_id === selectedAccountId);
+        if (accountLines.length === 0) return;
 
-        // Filter by specific category if in 'category' statement mode
-        if (statementType === 'category' && selectedCategoryId) {
-          if (line.category_id !== selectedCategoryId) return;
-        }
+        const targetAcc = accountMap.get(selectedAccountId);
+        const isLiability = ['credit_card', 'loan_payable'].includes(targetAcc?.account_type_id || '');
 
-        // Inflow / Outflow calculation
+        const totalDebit = accountLines.filter(l => l.line_type === 'debit').reduce((sum, l) => sum + l.amount, 0);
+        const totalCredit = accountLines.filter(l => l.line_type === 'credit').reduce((sum, l) => sum + l.amount, 0);
+
         let inflow = 0;
         let outflow = 0;
 
-        if (cat) {
-          if (cat.type === 'income' || line.line_type === 'credit') {
-            inflow = line.amount;
-          } else {
-            outflow = line.amount;
+        if (isLiability) {
+          // For liability accounts, Credit increases due (outflow/charge), Debit decreases due (inflow/payment)
+          if (totalCredit > totalDebit) {
+            outflow = totalCredit - totalDebit;
+          } else if (totalDebit > totalCredit) {
+            inflow = totalDebit - totalCredit;
           }
         } else {
-          // Account-level debit or credit
-          if (['cash', 'bank', 'mfs', 'savings_dps', 'investment'].includes(acc?.account_type_id || '')) {
-            if (line.line_type === 'debit') inflow = line.amount;
-            else outflow = line.amount;
-          } else {
-            if (line.line_type === 'credit') inflow = line.amount;
-            else outflow = line.amount;
+          // For asset accounts (Cash, Bank, MFS, Savings), Debit is Inflow (+), Credit is Outflow (-)
+          if (totalDebit > totalCredit) {
+            inflow = totalDebit - totalCredit;
+          } else if (totalCredit > totalDebit) {
+            outflow = totalCredit - totalDebit;
           }
         }
 
-        // Statement Type Filter (mix, income only, expense only, transfers only)
-        if (statementType === 'income' && inflow <= 0) return;
-        if (statementType === 'expense' && outflow <= 0) return;
-        if (statementType === 'transfers' && entry.source_type !== 'transfer') return;
+        // If net is 0, skip
+        if (inflow === 0 && outflow === 0) return;
+
+        // Resolve counter category and counterparty
+        const counterLine = lines.find(l => l.account_id !== selectedAccountId);
+        const catId = lines.find(l => l.category_id)?.category_id || counterLine?.category_id;
+        const cat = catId ? categoryMap.get(catId) : undefined;
+        const counterparty = lines.find(l => l.counterparty)?.counterparty || '';
 
         rows.push({
-          id: `${entry.id}_${lineIdx}`,
+          id: `${entry.id}_acc`,
           entryId: entry.id,
           entryNumber: entry.entry_number,
           date: entry.entry_date,
-          memo: line.memo || entry.memo,
+          memo: entry.memo || accountLines[0].memo || 'Transaction',
           sourceType: entry.source_type,
           categoryName: cat?.name || (entry.source_type === 'transfer' ? 'Transfer' : 'Uncategorized'),
           categoryType: cat?.type || entry.source_type,
-          accountName: acc?.name || 'General Account',
-          counterparty: line.counterparty || '',
+          accountName: targetAcc?.name || 'Account',
+          counterparty,
           inflow,
           outflow,
           isHistorical: Boolean(entry.is_historical),
           historicalNote: entry.historical_note,
         });
+        return;
+      }
+
+      // --- CASE 2: SPECIFIC CATEGORY STATEMENT MODE ---
+      if (statementType === 'category' && selectedCategoryId) {
+        const catLine = lines.find(l => l.category_id === selectedCategoryId);
+        if (!catLine) return;
+
+        const targetCat = categoryMap.get(selectedCategoryId);
+        const isIncomeCat = targetCat?.type === 'income' || Boolean(targetCat?.income_type);
+
+        let inflow = 0;
+        let outflow = 0;
+        let displayAccName = 'General Account';
+
+        if (isIncomeCat) {
+          inflow = catLine.amount;
+          const depositLine = lines.find(l => l.line_type === 'debit');
+          const depAcc = depositLine ? accountMap.get(depositLine.account_id) : undefined;
+          displayAccName = depAcc?.name || 'Bank / Wallet';
+        } else {
+          outflow = catLine.amount;
+          const payLine = lines.find(l => l.line_type === 'credit');
+          const payAcc = payLine ? accountMap.get(payLine.account_id) : undefined;
+          displayAccName = payAcc?.name || 'Cash / Card';
+        }
+
+        rows.push({
+          id: `${entry.id}_cat`,
+          entryId: entry.id,
+          entryNumber: entry.entry_number,
+          date: entry.entry_date,
+          memo: catLine.memo || entry.memo,
+          sourceType: entry.source_type,
+          categoryName: targetCat?.name || 'Category',
+          categoryType: targetCat?.type || 'expense',
+          accountName: displayAccName,
+          counterparty: catLine.counterparty || lines.find(l => l.counterparty)?.counterparty || '',
+          inflow,
+          outflow,
+          isHistorical: Boolean(entry.is_historical),
+          historicalNote: entry.historical_note,
+        });
+        return;
+      }
+
+      // --- CASE 3: GENERAL STATEMENT (MIX, INCOME ONLY, EXPENSE ONLY, TRANSFERS ONLY) ---
+      // A. Transfers
+      if (entry.source_type === 'transfer') {
+        if (statementType === 'income' || statementType === 'expense') return;
+
+        const creditLine = lines.find(l => l.line_type === 'credit');
+        const debitLine = lines.find(l => l.line_type === 'debit');
+        const fromAcc = creditLine ? accountMap.get(creditLine.account_id) : undefined;
+        const toAcc = debitLine ? accountMap.get(debitLine.account_id) : undefined;
+        const transferAmount = debitLine?.amount || creditLine?.amount || 0;
+
+        rows.push({
+          id: `${entry.id}_transfer`,
+          entryId: entry.id,
+          entryNumber: entry.entry_number,
+          date: entry.entry_date,
+          memo: entry.memo || `Transfer: ${fromAcc?.name || 'Account'} → ${toAcc?.name || 'Account'}`,
+          sourceType: 'transfer',
+          categoryName: 'Transfer',
+          categoryType: 'transfer',
+          accountName: `${fromAcc?.name || 'Source'} → ${toAcc?.name || 'Destination'}`,
+          counterparty: '—',
+          inflow: statementType === 'transfers' ? transferAmount : 0,
+          outflow: statementType === 'transfers' ? transferAmount : 0,
+          isHistorical: Boolean(entry.is_historical),
+          historicalNote: entry.historical_note,
+        });
+        return;
+      }
+
+      if (statementType === 'transfers') return;
+
+      // B. Opening Balance
+      if (entry.source_type === 'opening_balance') {
+        if (statementType === 'expense') return;
+        const debitLine = lines.find(l => l.line_type === 'debit');
+        const acc = debitLine ? accountMap.get(debitLine.account_id) : undefined;
+        const amount = debitLine?.amount || lines[0]?.amount || 0;
+
+        rows.push({
+          id: `${entry.id}_open`,
+          entryId: entry.id,
+          entryNumber: entry.entry_number,
+          date: entry.entry_date,
+          memo: entry.memo || `Opening Balance: ${acc?.name || 'Account'}`,
+          sourceType: 'opening_balance',
+          categoryName: 'Opening Balance',
+          categoryType: 'equity',
+          accountName: acc?.name || 'Account',
+          counterparty: '—',
+          inflow: amount,
+          outflow: 0,
+          isHistorical: Boolean(entry.is_historical),
+          historicalNote: entry.historical_note,
+        });
+        return;
+      }
+
+      // C. Income Entry Check
+      const incomeCatLine = lines.find(l => {
+        if (!l.category_id) return false;
+        const c = categoryMap.get(l.category_id);
+        return c?.type === 'income' || Boolean(c?.income_type);
+      });
+
+      const isCreditToIncome = lines.some(l => {
+        if (l.line_type !== 'credit') return false;
+        if (l.account_id === defaultIncomeAccUuid) return true;
+        const a = accountMap.get(l.account_id);
+        return (
+          a?.account_type_id?.startsWith('income') ||
+          a?.name.toLowerCase().includes('earned revenue') ||
+          a?.name.toLowerCase().includes('income')
+        );
+      });
+
+      const isIncome = Boolean(incomeCatLine || isCreditToIncome);
+
+      if (isIncome) {
+        if (statementType === 'expense') return;
+
+        const debitLine = lines.find(l => {
+          if (l.line_type !== 'debit') return false;
+          const a = accountMap.get(l.account_id);
+          return a && ['cash', 'bank', 'mfs', 'savings_dps', 'investment'].includes(a.account_type_id);
+        }) || lines.find(l => l.line_type === 'debit');
+
+        const depAcc = debitLine ? accountMap.get(debitLine.account_id) : undefined;
+        const catId = incomeCatLine?.category_id || lines.find(l => l.category_id)?.category_id;
+        const cat = catId ? categoryMap.get(catId) : undefined;
+        const amount = incomeCatLine?.amount || debitLine?.amount || lines[0]?.amount || 0;
+        const counterparty = lines.find(l => l.counterparty)?.counterparty || '';
+
+        rows.push({
+          id: `${entry.id}_inc`,
+          entryId: entry.id,
+          entryNumber: entry.entry_number,
+          date: entry.entry_date,
+          memo: entry.memo,
+          sourceType: entry.source_type,
+          categoryName: cat?.name || 'Income / Revenue',
+          categoryType: 'income',
+          accountName: depAcc?.name || 'Bank / Wallet',
+          counterparty,
+          inflow: amount,
+          outflow: 0,
+          isHistorical: Boolean(entry.is_historical),
+          historicalNote: entry.historical_note,
+        });
+        return;
+      }
+
+      // D. Expense Entry Check
+      if (statementType === 'income') return;
+
+      const creditLine = lines.find(l => {
+        if (l.line_type !== 'credit') return false;
+        const a = accountMap.get(l.account_id);
+        return a && ['cash', 'bank', 'mfs', 'credit_card', 'savings_dps', 'investment', 'loan_payable'].includes(a.account_type_id);
+      }) || lines.find(l => l.line_type === 'credit');
+
+      const payAcc = creditLine ? accountMap.get(creditLine.account_id) : undefined;
+
+      const expenseCatLine = lines.find(l => {
+        if (!l.category_id) return false;
+        const c = categoryMap.get(l.category_id);
+        return c?.type === 'expense';
+      }) || lines.find(l => l.line_type === 'debit');
+
+      const catId = expenseCatLine?.category_id || lines.find(l => l.category_id)?.category_id;
+      const cat = catId ? categoryMap.get(catId) : undefined;
+      const amount = expenseCatLine?.amount || creditLine?.amount || lines[0]?.amount || 0;
+      const counterparty = lines.find(l => l.counterparty)?.counterparty || '';
+
+      rows.push({
+        id: `${entry.id}_exp`,
+        entryId: entry.id,
+        entryNumber: entry.entry_number,
+        date: entry.entry_date,
+        memo: entry.memo,
+        sourceType: entry.source_type,
+        categoryName: cat?.name || 'General Expense',
+        categoryType: 'expense',
+        accountName: payAcc?.name || 'Cash / Card',
+        counterparty,
+        inflow: 0,
+        outflow: amount,
+        isHistorical: Boolean(entry.is_historical),
+        historicalNote: entry.historical_note,
       });
     });
 
     return rows.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  }, [entries, dateRangeBounds, includeHistorical, statementType, selectedAccountId, selectedCategoryId, categoryMap, accountMap]);
+  }, [entries, dateRangeBounds, includeHistorical, statementType, selectedAccountId, selectedCategoryId, categoryMap, accountMap, workspaceId]);
 
   // Aggregate Metrics (Strictly 100% computed from real records - zero mock numbers)
   const totalInflow = useMemo(() => statementRows.reduce((sum, r) => sum + r.inflow, 0), [statementRows]);

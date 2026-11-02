@@ -29,6 +29,7 @@ import { db } from '../../services/db';
 import { NavItemKey } from '../layout/Sidebar';
 import { AccountsLiveCockpit } from './AccountsLiveCockpit';
 import { DashboardWidgetConfig, DashboardWidgetId } from '../../types';
+import { toUuid } from '../../lib/uuid';
 
 interface ExecutiveDashboardProps {
   onNavigate: (view: NavItemKey) => void;
@@ -205,17 +206,42 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({
   let monthlyIncome = 0;
   let monthlyExpense = 0;
 
+  const categories = db.getCategories(workspaceId);
+  const incomeCategoryIds = new Set(categories.filter(c => c.type === 'income').map(c => c.id));
+  const expenseCategoryIds = new Set(categories.filter(c => c.type === 'expense').map(c => c.id));
+  const defaultIncomeAccUuid = toUuid(`acc_income_earned_${workspaceId}`);
+  const defaultExpenseAccUuid = toUuid(`acc_expense_operating_${workspaceId}`);
+
   journalEntries.forEach(entry => {
-    if (entry.status === 'posted' && entry.entry_date.startsWith(currentMonthStr)) {
-      entry.lines?.forEach(line => {
-        if (line.category_id) {
-          if (line.line_type === 'debit') {
-            monthlyExpense += line.amount;
-          } else if (line.line_type === 'credit') {
-            monthlyIncome += line.amount;
-          }
-        }
-      });
+    if (entry.status !== 'posted') return;
+    if (!entry.entry_date.startsWith(currentMonthStr)) return;
+    if (entry.source_type === 'transfer' || entry.source_type === 'opening_balance') return;
+
+    const lines = entry.lines || [];
+    if (lines.length === 0) return;
+
+    // Check if this entry is income
+    const isIncome = lines.some(l => 
+      (l.category_id && incomeCategoryIds.has(l.category_id)) ||
+      (l.line_type === 'credit' && l.account_id === defaultIncomeAccUuid)
+    );
+
+    // Check if this entry is expense
+    const isExpense = lines.some(l => 
+      (l.category_id && expenseCategoryIds.has(l.category_id)) ||
+      (l.line_type === 'debit' && l.account_id === defaultExpenseAccUuid)
+    );
+
+    if (isIncome && !isExpense) {
+      const incLine = lines.find(l => l.account_id === defaultIncomeAccUuid) ||
+                      lines.find(l => l.category_id && incomeCategoryIds.has(l.category_id)) ||
+                      lines[0];
+      monthlyIncome += incLine?.amount || 0;
+    } else if (isExpense) {
+      const expLine = lines.find(l => l.account_id === defaultExpenseAccUuid) ||
+                      lines.find(l => l.category_id && expenseCategoryIds.has(l.category_id)) ||
+                      lines[0];
+      monthlyExpense += expLine?.amount || 0;
     }
   });
 
