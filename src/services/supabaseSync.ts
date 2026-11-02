@@ -330,6 +330,9 @@ class SupabaseSyncEngine {
         created_by: userId ? userId : null,
         updated_at: new Date().toISOString(),
       };
+      if (entry.period_end_date !== undefined) {
+        entryPayload.period_end_date = entry.period_end_date || null;
+      }
       if (entry.is_historical !== undefined) {
         entryPayload.is_historical = Boolean(entry.is_historical);
       }
@@ -340,7 +343,8 @@ class SupabaseSyncEngine {
       try {
         await supabase.from('journal_entries').upsert(entryPayload);
       } catch (upsertErr) {
-        // Fallback without historical columns if migration not run yet
+        // Fallback without historical/period columns if migration not run yet
+        delete entryPayload.period_end_date;
         delete entryPayload.is_historical;
         delete entryPayload.historical_note;
         await supabase.from('journal_entries').upsert(entryPayload);

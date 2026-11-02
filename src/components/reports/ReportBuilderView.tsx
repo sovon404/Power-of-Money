@@ -38,7 +38,7 @@ export const ReportBuilderView: React.FC = () => {
   const entries = db.getJournalEntries(workspaceId);
 
   // Date Range and Filter state
-  const [datePreset, setDatePreset] = useState<'all' | 'today' | '7days' | '30days' | 'this_month' | 'last_month' | 'this_year' | 'custom'>('this_month');
+  const [datePreset, setDatePreset] = useState<'all' | 'today' | '7days' | '30days' | 'this_month' | 'last_month' | 'this_year' | 'last_year' | 'custom'>('this_month');
   const [fromDate, setFromDate] = useState<string>('');
   const [toDate, setToDate] = useState<string>('');
   
@@ -81,6 +81,13 @@ export const ReportBuilderView: React.FC = () => {
       const start = `${now.getFullYear()}-01-01`;
       return { start, end: todayStr };
     }
+    if (datePreset === 'last_year') {
+      const prevYear = now.getFullYear() - 1;
+      return { 
+        start: `${prevYear}-01-01`, 
+        end: `${prevYear}-12-31` 
+      };
+    }
     if (datePreset === 'custom') {
       return { start: fromDate, end: toDate };
     }
@@ -97,6 +104,7 @@ export const ReportBuilderView: React.FC = () => {
     entryId: string;
     entryNumber: number;
     date: string;
+    periodEndDate?: string;
     memo: string;
     sourceType: string;
     categoryName: string;
@@ -120,9 +128,11 @@ export const ReportBuilderView: React.FC = () => {
       // Filter by historical flag
       if (!includeHistorical && entry.is_historical) return;
 
-      // Filter by date range
-      if (dateRangeBounds.start && entry.entry_date < dateRangeBounds.start) return;
-      if (dateRangeBounds.end && entry.entry_date > dateRangeBounds.end) return;
+      // Date range filtering with multi-period / span overlap support
+      const entryStart = entry.entry_date;
+      const entryEnd = entry.period_end_date || entry.entry_date;
+      if (dateRangeBounds.start && entryEnd < dateRangeBounds.start) return;
+      if (dateRangeBounds.end && entryStart > dateRangeBounds.end) return;
 
       const lines = entry.lines || [];
       if (lines.length === 0) return;
@@ -171,6 +181,7 @@ export const ReportBuilderView: React.FC = () => {
           entryId: entry.id,
           entryNumber: entry.entry_number,
           date: entry.entry_date,
+          periodEndDate: entry.period_end_date,
           memo: entry.memo || accountLines[0].memo || 'Transaction',
           sourceType: entry.source_type,
           categoryName: cat?.name || (entry.source_type === 'transfer' ? 'Transfer' : 'Uncategorized'),
@@ -214,6 +225,7 @@ export const ReportBuilderView: React.FC = () => {
           entryId: entry.id,
           entryNumber: entry.entry_number,
           date: entry.entry_date,
+          periodEndDate: entry.period_end_date,
           memo: catLine.memo || entry.memo,
           sourceType: entry.source_type,
           categoryName: targetCat?.name || 'Category',
@@ -244,6 +256,7 @@ export const ReportBuilderView: React.FC = () => {
           entryId: entry.id,
           entryNumber: entry.entry_number,
           date: entry.entry_date,
+          periodEndDate: entry.period_end_date,
           memo: entry.memo || `Transfer: ${fromAcc?.name || 'Account'} → ${toAcc?.name || 'Account'}`,
           sourceType: 'transfer',
           categoryName: 'Transfer',
@@ -272,6 +285,7 @@ export const ReportBuilderView: React.FC = () => {
           entryId: entry.id,
           entryNumber: entry.entry_number,
           date: entry.entry_date,
+          periodEndDate: entry.period_end_date,
           memo: entry.memo || `Opening Balance: ${acc?.name || 'Account'}`,
           sourceType: 'opening_balance',
           categoryName: 'Opening Balance',
@@ -326,6 +340,7 @@ export const ReportBuilderView: React.FC = () => {
           entryId: entry.id,
           entryNumber: entry.entry_number,
           date: entry.entry_date,
+          periodEndDate: entry.period_end_date,
           memo: entry.memo,
           sourceType: entry.source_type,
           categoryName: cat?.name || 'Income / Revenue',
@@ -367,6 +382,7 @@ export const ReportBuilderView: React.FC = () => {
         entryId: entry.id,
         entryNumber: entry.entry_number,
         date: entry.entry_date,
+        periodEndDate: entry.period_end_date,
         memo: entry.memo,
         sourceType: entry.source_type,
         categoryName: cat?.name || 'General Expense',
@@ -517,7 +533,8 @@ export const ReportBuilderView: React.FC = () => {
               <option value="this_month">This Month</option>
               <option value="last_month">Last Month</option>
               <option value="this_year">This Fiscal Year</option>
-              <option value="custom">Custom Date-to-Date...</option>
+              <option value="last_year">Previous Year (2025)</option>
+              <option value="custom">Custom Date-to-Date Period...</option>
             </select>
           </div>
 
@@ -578,29 +595,43 @@ export const ReportBuilderView: React.FC = () => {
 
         {/* Date From & Date To Custom Pickers */}
         {datePreset === 'custom' && (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700">
-            <div>
-              <label className="block text-2xs font-semibold text-slate-600 dark:text-slate-400 mb-1">
-                From Date (Start)
-              </label>
-              <input
-                type="date"
-                value={fromDate}
-                onChange={(e) => setFromDate(e.target.value)}
-                className="w-full px-3 py-1.5 text-xs rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
-              />
+          <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-2.5">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                <Calendar className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+                Custom Date-to-Date Period Range
+              </span>
+              <span className="text-3xs text-slate-500 dark:text-slate-400 font-mono">
+                {fromDate && toDate ? `${fromDate} → ${toDate}` : 'Enter start & end dates'}
+              </span>
             </div>
-            <div>
-              <label className="block text-2xs font-semibold text-slate-600 dark:text-slate-400 mb-1">
-                To Date (End)
-              </label>
-              <input
-                type="date"
-                value={toDate}
-                onChange={(e) => setToDate(e.target.value)}
-                className="w-full px-3 py-1.5 text-xs rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
-              />
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-2xs font-semibold text-slate-600 dark:text-slate-400 mb-1">
+                  Start Date (From)
+                </label>
+                <input
+                  type="date"
+                  value={fromDate}
+                  onChange={(e) => setFromDate(e.target.value)}
+                  className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500 font-mono"
+                />
+              </div>
+              <div>
+                <label className="block text-2xs font-semibold text-slate-600 dark:text-slate-400 mb-1">
+                  End Date (To)
+                </label>
+                <input
+                  type="date"
+                  value={toDate}
+                  onChange={(e) => setToDate(e.target.value)}
+                  className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500 font-mono"
+                />
+              </div>
             </div>
+            <p className="text-3xs text-slate-500 dark:text-slate-400">
+              💡 Filters all single-day entries and overlapping multi-year / historical period blocks (e.g. 01 Jan 2025 to 31 Dec 2026).
+            </p>
           </div>
         )}
       </div>
@@ -709,8 +740,13 @@ export const ReportBuilderView: React.FC = () => {
                 ) : (
                   statementRows.map(row => (
                     <tr key={row.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors">
-                      <td className="py-3 px-3 font-mono text-slate-500 whitespace-nowrap">
-                        {row.date}
+                      <td className="py-3 px-3 font-mono text-slate-600 dark:text-slate-400 whitespace-nowrap text-xs">
+                        <div>{row.date}</div>
+                        {row.periodEndDate && (
+                          <div className="text-3xs text-emerald-600 dark:text-emerald-400 font-sans font-semibold flex items-center gap-0.5">
+                            <span>→ {row.periodEndDate}</span>
+                          </div>
+                        )}
                       </td>
                       <td className="py-3 px-3 font-mono text-slate-400 whitespace-nowrap">
                         #{row.entryNumber}

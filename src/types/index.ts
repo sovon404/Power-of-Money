@@ -137,6 +137,7 @@ export interface JournalEntry {
   posted_at?: string;
   is_historical?: boolean;
   historical_note?: string;
+  period_end_date?: string;
   created_at: string;
   lines?: JournalLine[];
 }

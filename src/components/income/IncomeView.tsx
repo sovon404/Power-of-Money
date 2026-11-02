@@ -97,6 +97,7 @@ export const IncomeView: React.FC = () => {
   interface IncomeRecord {
     entryId: string;
     date: string;
+    periodEndDate?: string;
     memo: string;
     counterparty: string;
     categoryId?: string;
@@ -195,6 +196,7 @@ export const IncomeView: React.FC = () => {
       records.push({
         entryId: entry.id,
         date: entry.entry_date,
+        periodEndDate: entry.period_end_date,
         memo: entry.memo,
         counterparty: creditLine?.counterparty || debitLine?.counterparty || '',
         categoryId: catId,
@@ -315,13 +317,18 @@ export const IncomeView: React.FC = () => {
     const currentMonthPrefix = todayStr.slice(0, 7);
 
     return incomeRecords.filter(r => {
-      // Date filter
-      if (dateFilterRange === '7days' && r.date < sevenDaysAgo) return false;
-      if (dateFilterRange === '30days' && r.date < thirtyDaysAgo) return false;
-      if (dateFilterRange === 'this_month' && !r.date.startsWith(currentMonthPrefix)) return false;
+      // Date filter with periodEndDate overlap support
+      const rStart = r.date;
+      const rEnd = r.periodEndDate || r.date;
+      if (dateFilterRange === '7days' && rEnd < sevenDaysAgo) return false;
+      if (dateFilterRange === '30days' && rEnd < thirtyDaysAgo) return false;
+      if (dateFilterRange === 'this_month') {
+        const monthStart = `${currentMonthPrefix}-01`;
+        if (rEnd < monthStart || rStart > todayStr) return false;
+      }
       if (dateFilterRange === 'custom') {
-        if (customFromDate && r.date < customFromDate) return false;
-        if (customToDate && r.date > customToDate) return false;
+        if (customFromDate && rEnd < customFromDate) return false;
+        if (customToDate && rStart > customToDate) return false;
       }
 
       // Income Type filter
@@ -839,8 +846,13 @@ export const IncomeView: React.FC = () => {
               ) : (
                 filteredRecords.map(rec => (
                   <tr key={rec.entryId} className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors">
-                    <td className="py-3 px-3 font-mono text-slate-500 whitespace-nowrap">
-                      {rec.date}
+                    <td className="py-3 px-3 font-mono text-slate-500 whitespace-nowrap text-xs">
+                      <div>{rec.date}</div>
+                      {rec.periodEndDate && (
+                        <div className="text-3xs text-emerald-600 dark:text-emerald-400 font-sans font-semibold flex items-center gap-0.5">
+                          <span>→ {rec.periodEndDate}</span>
+                        </div>
+                      )}
                     </td>
                     <td className="py-3 px-3">
                       <div className="font-medium text-slate-900 dark:text-white">{rec.memo}</div>

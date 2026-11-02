@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { X, ArrowRightLeft, ArrowDownRight, ArrowUpRight, Scale, AlertCircle, History, Trash2, PiggyBank } from 'lucide-react';
+import { X, ArrowRightLeft, ArrowDownRight, ArrowUpRight, Scale, AlertCircle, History, Trash2, PiggyBank, Calendar, CalendarRange } from 'lucide-react';
 import { useWorkspace } from '../../context/WorkspaceContext';
 import { db } from '../../services/db';
 import { JournalEntry, Category, FinancialAccount } from '../../types';
@@ -31,6 +31,8 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
 
   const [mode, setMode] = useState<'expense' | 'income' | 'transfer' | 'saving'>(defaultMode || 'expense');
   const [date, setDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [periodEndDate, setPeriodEndDate] = useState<string>('');
+  const [isDateRange, setIsDateRange] = useState<boolean>(false);
   const [amount, setAmount] = useState<string>('');
   const [memo, setMemo] = useState<string>('');
   const [sourceAccountId, setSourceAccountId] = useState<string>('');
@@ -42,12 +44,38 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
   const [historicalNote, setHistoricalNote] = useState<string>('');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+  // Helper for computing duration span
+  const getPeriodDurationLabel = (start: string, end: string) => {
+    if (!start || !end) return '';
+    const d1 = new Date(start);
+    const d2 = new Date(end);
+    const diffTime = d2.getTime() - d1.getTime();
+    if (diffTime < 0) return 'Invalid: End date must be on or after start date';
+    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1; // inclusive
+    if (diffDays >= 365) {
+      const years = (diffDays / 365).toFixed(1);
+      return `${years} yrs (${diffDays.toLocaleString()} days) span`;
+    }
+    if (diffDays >= 30) {
+      const months = Math.round(diffDays / 30.4);
+      return `~${months} mo (${diffDays} days) span`;
+    }
+    return `${diffDays} days period`;
+  };
+
   // Initialize or populate from entryToEdit ONLY when modal opens or entryToEdit changes
   useEffect(() => {
     if (!isOpen) return;
 
     if (entryToEdit) {
       setDate(entryToEdit.entry_date);
+      if (entryToEdit.period_end_date) {
+        setIsDateRange(true);
+        setPeriodEndDate(entryToEdit.period_end_date);
+      } else {
+        setIsDateRange(false);
+        setPeriodEndDate('');
+      }
       setMemo(entryToEdit.memo || '');
       setIsHistorical(Boolean(entryToEdit.is_historical));
       setHistoricalNote(entryToEdit.historical_note || '');
@@ -94,6 +122,8 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
     } else {
       // New transaction defaults
       setDate(new Date().toISOString().split('T')[0]);
+      setPeriodEndDate('');
+      setIsDateRange(false);
       setAmount('');
       setMemo('');
       setCounterparty('');
@@ -275,6 +305,12 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
       return;
     }
 
+    if (isDateRange && periodEndDate && periodEndDate < date) {
+      setErrorMsg('Period End Date must be on or after Start Date.');
+      return;
+    }
+
+    const effectivePeriodEnd = isDateRange && periodEndDate ? periodEndDate : undefined;
     const memoText = memo.trim();
     const selectedCat = categories.find(c => c.id === categoryId);
     const isSavingAllocation = mode === 'saving' || selectedCat?.type === 'saving' || selectedCat?.accounting_classification === 'asset_savings';
@@ -316,6 +352,7 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
         const res = db.updateJournalEntry(workspaceId, entryToEdit.id, {
           memo: memoText,
           entry_date: date,
+          period_end_date: effectivePeriodEnd,
           is_historical: isHistorical,
           historical_note: historicalNote.trim() || undefined,
           lines,
@@ -330,6 +367,7 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
           source_type: 'manual',
           source_id: targetSavingsAccountId,
           entry_date: date,
+          period_end_date: effectivePeriodEnd,
           is_historical: isHistorical,
           historical_note: historicalNote.trim() || undefined,
           lines,
@@ -385,6 +423,7 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
         const res = db.updateJournalEntry(workspaceId, entryToEdit.id, {
           memo: memoText,
           entry_date: date,
+          period_end_date: effectivePeriodEnd,
           is_historical: isHistorical,
           historical_note: historicalNote.trim() || undefined,
           lines,
@@ -398,6 +437,7 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
           memo: memoText,
           source_type: 'manual',
           entry_date: date,
+          period_end_date: effectivePeriodEnd,
           is_historical: isHistorical,
           historical_note: historicalNote.trim() || undefined,
           lines,
@@ -437,6 +477,7 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
         const res = db.updateJournalEntry(workspaceId, entryToEdit.id, {
           memo: memoText,
           entry_date: date,
+          period_end_date: effectivePeriodEnd,
           is_historical: isHistorical,
           historical_note: historicalNote.trim() || undefined,
           lines,
@@ -450,6 +491,7 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
           memo: memoText,
           source_type: 'manual',
           entry_date: date,
+          period_end_date: effectivePeriodEnd,
           is_historical: isHistorical,
           historical_note: historicalNote.trim() || undefined,
           lines,
@@ -487,6 +529,7 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
         const res = db.updateJournalEntry(workspaceId, entryToEdit.id, {
           memo: memoText,
           entry_date: date,
+          period_end_date: effectivePeriodEnd,
           is_historical: isHistorical,
           historical_note: historicalNote.trim() || undefined,
           lines,
@@ -502,7 +545,8 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
           destinationAccountId,
           numAmount,
           date,
-          memoText
+          memoText,
+          effectivePeriodEnd
         );
         if (!res.success) {
           setErrorMsg(res.error || 'Failed to post transfer.');
@@ -652,8 +696,8 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
         )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          {/* Amount & Date Grid */}
-          <div className="grid grid-cols-2 gap-3">
+          {/* Amount & Date Configuration */}
+          <div className="space-y-3">
             <div>
               <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                 Amount ({currentWorkspace?.currency || 'BDT'})
@@ -666,23 +710,108 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
                   placeholder="0.00"
                   value={amount}
                   onChange={(e) => setAmount(e.target.value)}
-                  className="w-full pl-8 pr-3 py-2 text-sm font-mono font-semibold rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500"
+                  className="w-full pl-8 pr-3 py-2.5 text-base font-mono font-bold rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500 shadow-xs"
                   required
                 />
               </div>
             </div>
 
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                Date
-              </label>
-              <input
-                type="date"
-                value={date}
-                onChange={(e) => setDate(e.target.value)}
-                className="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500"
-                required
-              />
+            {/* Date Mode Toggle: Single Date vs Period / Date Range (e.g. 01 Jan 2025 to 31 Dec 2026) */}
+            <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 space-y-2.5">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
+                  <Calendar className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
+                  Date / Timeframe
+                </span>
+                <div className="inline-flex items-center p-0.5 rounded-lg bg-slate-200/80 dark:bg-slate-700/80 text-3xs font-medium">
+                  <button
+                    type="button"
+                    onClick={() => setIsDateRange(false)}
+                    className={`px-2.5 py-1 rounded-md transition-all ${
+                      !isDateRange
+                        ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-xs font-bold'
+                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
+                    }`}
+                  >
+                    Specific Date
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsDateRange(true);
+                      if (!periodEndDate) {
+                        setPeriodEndDate(date);
+                      }
+                    }}
+                    className={`px-2.5 py-1 rounded-md transition-all flex items-center gap-1 ${
+                      isDateRange
+                        ? 'bg-white dark:bg-slate-900 text-emerald-600 dark:text-emerald-400 shadow-xs font-bold'
+                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
+                    }`}
+                  >
+                    <CalendarRange className="w-3 h-3" />
+                    Date Period / Span
+                  </button>
+                </div>
+              </div>
+
+              {!isDateRange ? (
+                <div>
+                  <label className="block text-2xs font-medium text-slate-500 dark:text-slate-400 mb-1">
+                    Transaction Date
+                  </label>
+                  <input
+                    type="date"
+                    value={date}
+                    onChange={(e) => setDate(e.target.value)}
+                    className="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500"
+                    required
+                  />
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <div className="grid grid-cols-2 gap-2.5">
+                    <div>
+                      <label className="block text-2xs font-medium text-slate-500 dark:text-slate-400 mb-1">
+                        From (Start Date)
+                      </label>
+                      <input
+                        type="date"
+                        value={date}
+                        onChange={(e) => setDate(e.target.value)}
+                        className="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500"
+                        required
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-2xs font-medium text-slate-500 dark:text-slate-400 mb-1">
+                        To (End Date)
+                      </label>
+                      <input
+                        type="date"
+                        value={periodEndDate}
+                        onChange={(e) => setPeriodEndDate(e.target.value)}
+                        className="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500"
+                        required
+                      />
+                    </div>
+                  </div>
+                  {periodEndDate && (
+                    <div className="flex items-center justify-between text-3xs px-2.5 py-1.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200/80 dark:border-emerald-800/60 text-emerald-700 dark:text-emerald-300">
+                      <span className="font-semibold flex items-center gap-1">
+                        <CalendarRange className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
+                        Span: {date} → {periodEndDate}
+                      </span>
+                      <span className="font-mono font-medium">
+                        {getPeriodDurationLabel(date, periodEndDate)}
+                      </span>
+                    </div>
+                  )}
+                  <p className="text-3xs text-slate-500 dark:text-slate-400">
+                    💡 Perfect for cumulative entries (e.g. 01 Jan 2025 to 31 Dec 2026), yearly retainers, or lump-sum prior records.
+                  </p>
+                </div>
+              )}
             </div>
           </div>
 

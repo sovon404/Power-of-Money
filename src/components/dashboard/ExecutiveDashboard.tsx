@@ -512,7 +512,14 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({
                         const totalAmount = entry.lines?.reduce((sum, l) => sum + (l.line_type === 'debit' ? l.amount : 0), 0) || 0;
                         return (
                           <tr key={entry.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition-colors">
-                            <td className="py-2.5 font-mono text-slate-500 whitespace-nowrap">{entry.entry_date}</td>
+                            <td className="py-2.5 font-mono text-slate-500 whitespace-nowrap text-xs">
+                              <div>{entry.entry_date}</div>
+                              {entry.period_end_date && (
+                                <div className="text-3xs text-emerald-600 dark:text-emerald-400 font-sans font-semibold">
+                                  → {entry.period_end_date}
+                                </div>
+                              )}
+                            </td>
                             <td className="py-2.5 font-medium text-slate-800 dark:text-slate-200">{entry.memo}</td>
                             <td className="py-2.5 text-slate-500 capitalize">{entry.source_type.replace('_', ' ')}</td>
                             <td className="py-2.5 text-right font-mono font-semibold text-slate-900 dark:text-white tabular-nums">{formatMoney(totalAmount)}</td>

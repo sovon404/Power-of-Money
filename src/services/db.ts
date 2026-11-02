@@ -560,6 +560,7 @@ class DatabaseEngine {
       source_type: JournalEntry['source_type'];
       source_id?: string;
       entry_date: string;
+      period_end_date?: string;
       is_historical?: boolean;
       historical_note?: string;
       lines: Array<{
@@ -602,6 +603,7 @@ class DatabaseEngine {
       workspace_id: workspaceId,
       entry_number: currentEntries.length + 1,
       entry_date: params.entry_date,
+      period_end_date: params.period_end_date || undefined,
       memo: params.memo,
       source_type: params.source_type,
       source_id: params.source_id,
@@ -667,6 +669,7 @@ class DatabaseEngine {
     params: {
       memo: string;
       entry_date: string;
+      period_end_date?: string;
       is_historical?: boolean;
       historical_note?: string;
       lines: Array<{
@@ -752,6 +755,7 @@ class DatabaseEngine {
       ...existingEntry,
       memo: params.memo,
       entry_date: params.entry_date,
+      period_end_date: params.period_end_date !== undefined ? (params.period_end_date || undefined) : existingEntry.period_end_date,
       is_historical: params.is_historical !== undefined ? Boolean(params.is_historical) : existingEntry.is_historical,
       historical_note: params.historical_note !== undefined ? params.historical_note : existingEntry.historical_note,
       lines: updatedLines,
@@ -827,7 +831,8 @@ class DatabaseEngine {
     destinationAccountId: string,
     amount: number,
     date: string,
-    memo: string
+    memo: string,
+    periodEndDate?: string
   ): { success: boolean; error?: string } {
     if (sourceAccountId === destinationAccountId) {
       return { success: false, error: 'Source and destination accounts must be different.' };
@@ -836,6 +841,7 @@ class DatabaseEngine {
       memo: memo || 'Account Transfer',
       source_type: 'transfer',
       entry_date: date,
+      period_end_date: periodEndDate,
       lines: [
         {
           account_id: destinationAccountId,

@@ -54,6 +54,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
     id: string;
     entryId: string;
     date: string;
+    periodEndDate?: string;
     memo: string;
     amount: number;
     categoryName: string;
@@ -154,6 +155,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
       id: debitLine?.id || entry.id,
       entryId: entry.id,
       date: entry.entry_date,
+      periodEndDate: entry.period_end_date,
       memo,
       amount,
       categoryName: catName,
@@ -486,12 +488,19 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
                   const entry = journalEntries.find(e => e.id === row.entryId);
                   return (
                     <tr key={row.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
-                      <td className="py-3 px-4 font-mono text-slate-500 whitespace-nowrap">
-                        <div className="flex items-center gap-1.5">
-                          <span>{row.date}</span>
-                          {entry?.is_historical && (
-                            <span className="px-1.5 py-0.5 rounded text-3xs font-semibold bg-amber-100 text-amber-800 dark:bg-amber-900/60 dark:text-amber-200 border border-amber-300 dark:border-amber-700" title={entry.historical_note || 'Prior Period DB Entry'}>
-                              Prior DB
+                      <td className="py-3 px-4 font-mono text-slate-500 whitespace-nowrap text-xs">
+                        <div className="flex flex-col gap-0.5">
+                          <div className="flex items-center gap-1.5">
+                            <span>{row.date}</span>
+                            {entry?.is_historical && (
+                              <span className="px-1.5 py-0.5 rounded text-3xs font-semibold bg-amber-100 text-amber-800 dark:bg-amber-900/60 dark:text-amber-200 border border-amber-300 dark:border-amber-700" title={entry.historical_note || 'Prior Period DB Entry'}>
+                                Prior DB
+                              </span>
+                            )}
+                          </div>
+                          {row.periodEndDate && (
+                            <span className="text-3xs text-emerald-600 dark:text-emerald-400 font-sans font-semibold">
+                              → {row.periodEndDate}
                             </span>
                           )}
                         </div>
