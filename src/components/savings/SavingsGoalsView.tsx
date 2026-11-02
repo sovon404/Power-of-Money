@@ -134,6 +134,15 @@ export const SavingsGoalsView: React.FC = () => {
     e.preventDefault();
     if (!newAccountName.trim()) return;
 
+    const normName = newAccountName.trim().toLowerCase();
+    const existing = db.getAccounts(workspaceId).find(a => a.name.toLowerCase().trim() === normName);
+    if (existing) {
+      setHeadTargetAcc(existing.id);
+      setNewAccountName('');
+      setIsCreatingHeadAccount(false);
+      return;
+    }
+
     const newAccId = generateUuid();
     const newAcc: FinancialAccount = {
       id: newAccId,
@@ -152,8 +161,6 @@ export const SavingsGoalsView: React.FC = () => {
     };
 
     db.saveAccount(newAcc);
-    const { supabaseSync } = await import('../../services/supabaseSync');
-    await supabaseSync.syncAccount(newAcc, workspaceId);
 
     refreshData();
     setHeadTargetAcc(newAccId);
@@ -204,9 +211,11 @@ export const SavingsGoalsView: React.FC = () => {
   };
 
   const handleDeleteSavingHead = async (cat: Category) => {
-    if (confirm(`Are you sure you want to permanently delete saving category "${cat.name}"?`)) {
+    try {
       await db.deleteCategory(cat.id, workspaceId);
       refreshData();
+    } catch (err) {
+      console.warn('Delete saving head notice:', err);
     }
   };
 

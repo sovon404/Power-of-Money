@@ -246,6 +246,22 @@ class SupabaseSyncEngine {
       let remoteId: string | null = null;
       if (byName && byName.length > 0) {
         remoteId = byName[0].id;
+        // Purge any remote duplicates from previous syncs
+        if (byName.length > 1) {
+          const duplicateIds = byName.slice(1).map(x => x.id);
+          for (const dupId of duplicateIds) {
+            try {
+              await supabase.from('journal_lines').update({ account_id: remoteId }).eq('account_id', dupId);
+              await supabase.from('categories').update({ target_savings_account_id: remoteId }).eq('target_savings_account_id', dupId);
+              await supabase.from('credit_cards').update({ account_id: remoteId }).eq('account_id', dupId);
+              await supabase.from('loans').update({ account_id: remoteId }).eq('account_id', dupId);
+              await supabase.from('savings_goals').update({ account_id: remoteId }).eq('account_id', dupId);
+              await supabase.from('financial_accounts').delete().eq('id', dupId).eq('workspace_id', wsUuid);
+            } catch (cleanupErr) {
+              console.warn('Account duplicate remote purge notice:', cleanupErr);
+            }
+          }
+        }
       } else {
         const { data: byId } = await supabase
           .from('financial_accounts')
@@ -804,8 +820,8 @@ class SupabaseSyncEngine {
     }
   }
 
-  async deleteAccount(accountId: string, workspaceId: string, accountName?: string) {
-    if (!this.isAvailable()) return;
+  async deleteAccount(accountId: string, workspaceId: string, accountName?: string): Promise<{ success: boolean; error?: string }> {
+    if (!this.isAvailable()) return { success: true };
     const accUuid = toUuid(accountId);
     const wsUuid = toUuid(workspaceId);
     try {
@@ -850,8 +866,10 @@ class SupabaseSyncEngine {
       if (accountName && accountName.trim()) {
         await supabase.from('financial_accounts').delete().eq('workspace_id', wsUuid).ilike('name', accountName.trim());
       }
-    } catch (err) {
+      return { success: true };
+    } catch (err: any) {
       console.warn('Delete account error:', err);
+      return { success: false, error: err.message || 'Delete failed' };
     }
   }
 

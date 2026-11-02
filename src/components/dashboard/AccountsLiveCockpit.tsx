@@ -291,11 +291,13 @@ export const AccountsLiveCockpit: React.FC<AccountsLiveCockpitProps> = ({
     }
   };
 
-  const handleDeleteCustomAccount = (accountId: string) => {
-    if (confirm('Are you sure you want to archive this head? Historical journal transactions will be retained.')) {
-      db.deleteAccount(accountId, workspaceId);
+  const handleDeleteCustomAccount = async (accountId: string) => {
+    try {
+      await db.deleteAccount(accountId, workspaceId);
       setEditAccountsList(prev => prev.filter(a => a.id !== accountId));
       refreshData();
+    } catch (err) {
+      console.warn('Delete account head notice:', err);
     }
   };
 

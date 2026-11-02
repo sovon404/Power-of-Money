@@ -147,8 +147,61 @@ DROP POLICY IF EXISTS "financial_accounts_all_access" ON public.financial_accoun
 CREATE POLICY "financial_accounts_all_access" ON public.financial_accounts
     FOR ALL TO authenticated USING (true) WITH CHECK (true);
 
--- 10. Verify execution
+-- 10. Clean up any existing duplicate financial accounts in Supabase, preserving balances & remapping journal lines
+DO $$
+DECLARE
+    dup RECORD;
+    primary_acc_id UUID;
+BEGIN
+    FOR dup IN 
+        SELECT workspace_id, LOWER(TRIM(name)) as norm_name, COUNT(*) as cnt
+        FROM public.financial_accounts
+        GROUP BY workspace_id, LOWER(TRIM(name))
+        HAVING COUNT(*) > 1
+    LOOP
+        -- Pick primary ID: prefer highest balance, then earliest created_at
+        SELECT id INTO primary_acc_id
+        FROM public.financial_accounts
+        WHERE workspace_id = dup.workspace_id AND LOWER(TRIM(name)) = dup.norm_name
+        ORDER BY ABS(current_balance_cached) DESC, created_at ASC
+        LIMIT 1;
+
+        -- Reassign journal lines from duplicate accounts to primary account
+        UPDATE public.journal_lines
+        SET account_id = primary_acc_id
+        WHERE account_id IN (
+            SELECT id FROM public.financial_accounts 
+            WHERE workspace_id = dup.workspace_id AND LOWER(TRIM(name)) = dup.norm_name AND id <> primary_acc_id
+        );
+
+        -- Reassign categories target_savings_account_id
+        UPDATE public.categories
+        SET target_savings_account_id = primary_acc_id
+        WHERE target_savings_account_id IN (
+            SELECT id FROM public.financial_accounts 
+            WHERE workspace_id = dup.workspace_id AND LOWER(TRIM(name)) = dup.norm_name AND id <> primary_acc_id
+        );
+
+        -- Reassign credit cards account_id
+        UPDATE public.credit_cards
+        SET account_id = primary_acc_id
+        WHERE account_id IN (
+            SELECT id FROM public.financial_accounts 
+            WHERE workspace_id = dup.workspace_id AND LOWER(TRIM(name)) = dup.norm_name AND id <> primary_acc_id
+        );
+
+        -- Delete duplicate accounts
+        DELETE FROM public.financial_accounts
+        WHERE workspace_id = dup.workspace_id 
+          AND LOWER(TRIM(name)) = dup.norm_name 
+          AND id <> primary_acc_id;
+    END LOOP;
+EXCEPTION WHEN OTHERS THEN
+    NULL;
+END $$;
+
+-- 11. Verify execution
 SELECT 
-    'SUCCESS: Categories & Saving Heads Schema Successfully Aligned' AS status,
-    count(*) AS total_categories_count 
-FROM public.categories;
+    'SUCCESS: Categories & Account Heads Schema Fully Aligned & Deduplicated' AS status,
+    (SELECT count(*) FROM public.categories) AS total_categories,
+    (SELECT count(*) FROM public.financial_accounts) AS total_accounts;

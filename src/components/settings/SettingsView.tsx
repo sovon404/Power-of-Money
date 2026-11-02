@@ -100,6 +100,15 @@ export const SettingsView: React.FC = () => {
     e.preventDefault();
     if (!newHeadName.trim()) return;
 
+    const normName = newHeadName.trim().toLowerCase();
+    const existing = db.getAccounts(workspaceId).find(a => a.name.toLowerCase().trim() === normName);
+    if (existing) {
+      setCatTargetSavingsAcc(existing.id);
+      setNewHeadName('');
+      setIsCreatingHead(false);
+      return;
+    }
+
     const newAccId = generateUuid();
     const newAcc: FinancialAccount = {
       id: newAccId,
@@ -118,8 +127,6 @@ export const SettingsView: React.FC = () => {
     };
 
     db.saveAccount(newAcc);
-    const { supabaseSync } = await import('../../services/supabaseSync');
-    await supabaseSync.syncAccount(newAcc, workspaceId);
 
     refreshData();
     setCatTargetSavingsAcc(newAccId);
@@ -301,7 +308,30 @@ CREATE POLICY "categories_all_access" ON public.categories FOR ALL TO authentica
 
 ALTER TABLE public.financial_accounts ENABLE ROW LEVEL SECURITY;
 DROP POLICY IF EXISTS "financial_accounts_all_access" ON public.financial_accounts;
-CREATE POLICY "financial_accounts_all_access" ON public.financial_accounts FOR ALL TO authenticated USING (true) WITH CHECK (true);`;
+CREATE POLICY "financial_accounts_all_access" ON public.financial_accounts FOR ALL TO authenticated USING (true) WITH CHECK (true);
+
+-- Deduplicate any duplicate financial accounts in Supabase
+DO $$
+DECLARE
+    dup RECORD;
+    primary_acc_id UUID;
+BEGIN
+    FOR dup IN 
+        SELECT workspace_id, LOWER(TRIM(name)) as norm_name, COUNT(*) as cnt
+        FROM public.financial_accounts
+        GROUP BY workspace_id, LOWER(TRIM(name))
+        HAVING COUNT(*) > 1
+    LOOP
+        SELECT id INTO primary_acc_id FROM public.financial_accounts
+        WHERE workspace_id = dup.workspace_id AND LOWER(TRIM(name)) = dup.norm_name
+        ORDER BY ABS(current_balance_cached) DESC, created_at ASC LIMIT 1;
+
+        UPDATE public.journal_lines SET account_id = primary_acc_id WHERE account_id IN (SELECT id FROM public.financial_accounts WHERE workspace_id = dup.workspace_id AND LOWER(TRIM(name)) = dup.norm_name AND id <> primary_acc_id);
+        UPDATE public.categories SET target_savings_account_id = primary_acc_id WHERE target_savings_account_id IN (SELECT id FROM public.financial_accounts WHERE workspace_id = dup.workspace_id AND LOWER(TRIM(name)) = dup.norm_name AND id <> primary_acc_id);
+        UPDATE public.credit_cards SET account_id = primary_acc_id WHERE account_id IN (SELECT id FROM public.financial_accounts WHERE workspace_id = dup.workspace_id AND LOWER(TRIM(name)) = dup.norm_name AND id <> primary_acc_id);
+        DELETE FROM public.financial_accounts WHERE workspace_id = dup.workspace_id AND LOWER(TRIM(name)) = dup.norm_name AND id <> primary_acc_id;
+    END LOOP;
+EXCEPTION WHEN OTHERS THEN NULL; END $$;`;
     navigator.clipboard.writeText(sql);
     setCopiedMasterFix(true);
     setTimeout(() => setCopiedMasterFix(false), 2000);

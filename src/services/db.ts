@@ -334,28 +334,82 @@ class DatabaseEngine {
       const otherAccs = allAccs.filter(a => a.workspace_id !== workspaceId);
       const localAccs = allAccs.filter(a => a.workspace_id === workspaceId);
       const localMap = new Map(localAccs.map(a => [a.id, a]));
+      const localNameMap = new Map(localAccs.map(a => [a.name.toLowerCase().trim(), a]));
       
       const remoteFiltered = data.accounts.filter(remoteAcc => 
         !deletedAccs.has(remoteAcc.id.toLowerCase()) && 
         !deletedAccs.has(remoteAcc.name.toLowerCase().trim())
       );
 
-      const mergedAccs = remoteFiltered.map(remoteAcc => {
-        const local = localMap.get(remoteAcc.id);
+      // 1. Deduplicate remote accounts by normalized name (prevent duplicates from Supabase)
+      const remoteDeduplicated: FinancialAccount[] = [];
+      const remoteSeenNames = new Map<string, FinancialAccount>();
+      const remoteDupIdsToPurge: string[] = [];
+
+      for (const rAcc of remoteFiltered) {
+        const normName = rAcc.name.toLowerCase().trim();
+        const existing = remoteSeenNames.get(normName);
+        if (!existing) {
+          remoteSeenNames.set(normName, rAcc);
+          remoteDeduplicated.push(rAcc);
+        } else {
+          // Keep the account with non-zero balance or latest data
+          if ((!existing.current_balance_cached || existing.current_balance_cached === 0) && (rAcc.current_balance_cached || rAcc.opening_balance)) {
+            existing.current_balance_cached = rAcc.current_balance_cached || rAcc.opening_balance;
+            existing.opening_balance = rAcc.opening_balance || existing.opening_balance;
+          }
+          this.remapAccountId(rAcc.id, existing.id, workspaceId);
+          remoteDupIdsToPurge.push(rAcc.id);
+        }
+      }
+
+      // Purge any remote duplicates from Supabase in background
+      if (remoteDupIdsToPurge.length > 0) {
+        Promise.all(remoteDupIdsToPurge.map(id => supabaseSync.deleteAccount(id, workspaceId))).catch(() => {});
+      }
+
+      // 2. Build merged accounts from deduplicated remote records
+      const mergedAccs: FinancialAccount[] = remoteDeduplicated.map(remoteAcc => {
+        const normName = remoteAcc.name.toLowerCase().trim();
+        const local = localMap.get(remoteAcc.id) || localNameMap.get(normName);
+        const resolvedBal = remoteAcc.current_balance_cached !== 0 
+          ? remoteAcc.current_balance_cached 
+          : (local?.current_balance_cached || remoteAcc.opening_balance || 0);
+
         return {
           ...remoteAcc,
-          // Preserve local balance if remote cached balance is 0 and local has a non-zero balance
-          current_balance_cached: remoteAcc.current_balance_cached !== 0 
-            ? remoteAcc.current_balance_cached 
-            : (local?.current_balance_cached || remoteAcc.opening_balance || 0),
+          current_balance_cached: resolvedBal,
         };
       });
 
-      // Preserve any local accounts not yet fetched from remote (unless deleted)
-      const remoteAccIds = new Set(data.accounts.map(a => a.id));
+      const mergedAccIds = new Set(mergedAccs.map(a => a.id));
+      const mergedAccNames = new Set(mergedAccs.map(a => a.name.toLowerCase().trim()));
+
+      // 3. Preserve genuine local accounts created in UI that don't exist remotely (NEVER duplicate by name!)
       for (const local of localAccs) {
-        if (!remoteAccIds.has(local.id) && !deletedAccs.has(local.id.toLowerCase()) && !deletedAccs.has(local.name.toLowerCase().trim())) {
+        const normName = local.name.toLowerCase().trim();
+        if (deletedAccs.has(local.id.toLowerCase()) || deletedAccs.has(normName)) {
+          continue;
+        }
+
+        // If remote already has this account under a different ID, remap local references and DO NOT duplicate
+        if (!mergedAccIds.has(local.id) && mergedAccNames.has(normName)) {
+          const matchingRemote = mergedAccs.find(m => m.name.toLowerCase().trim() === normName);
+          if (matchingRemote) {
+            this.remapAccountId(local.id, matchingRemote.id, workspaceId);
+            if ((!matchingRemote.current_balance_cached || matchingRemote.current_balance_cached === 0) && local.current_balance_cached) {
+              matchingRemote.current_balance_cached = local.current_balance_cached;
+              supabaseSync.syncAccount(matchingRemote, workspaceId);
+            }
+          }
+          continue;
+        }
+
+        // Only append if genuinely new
+        if (!mergedAccIds.has(local.id) && !mergedAccNames.has(normName)) {
           mergedAccs.push(local);
+          mergedAccIds.add(local.id);
+          mergedAccNames.add(normName);
           supabaseSync.syncAccount(local, workspaceId);
         }
       }
@@ -368,25 +422,61 @@ class DatabaseEngine {
       const otherCats = allCats.filter(c => c.workspace_id !== workspaceId);
       const localCats = allCats.filter(c => c.workspace_id === workspaceId);
       const localMap = new Map(localCats.map(c => [c.id, c]));
-      const localNameMap = new Map(localCats.map(c => [c.name.toLowerCase(), c]));
-
-      const mergedCats: Category[] = [];
-      const seenIds = new Set<string>();
+      const localNameMap = new Map(localCats.map(c => [c.name.toLowerCase().trim(), c]));
 
       const remoteFiltered = data.categories.filter(remoteCat => 
         !deletedCats.has(remoteCat.id.toLowerCase()) && 
         !deletedCats.has(remoteCat.name.toLowerCase().trim())
       );
 
-      for (const remoteCat of remoteFiltered) {
-        seenIds.add(remoteCat.id);
-        const local = localMap.get(remoteCat.id) || localNameMap.get(remoteCat.name.toLowerCase());
+      // 1. Deduplicate remote categories by normalized name and type
+      const remoteDeduplicated: Category[] = [];
+      const remoteSeenCats = new Map<string, Category>();
+      const remoteDupCatIdsToPurge: string[] = [];
+
+      for (const rCat of remoteFiltered) {
+        const key = `${rCat.name.toLowerCase().trim()}::${rCat.type}`;
+        const existing = remoteSeenCats.get(key);
+        if (!existing) {
+          remoteSeenCats.set(key, rCat);
+          remoteDeduplicated.push(rCat);
+        } else {
+          if (!existing.target_savings_account_id && rCat.target_savings_account_id) {
+            existing.target_savings_account_id = rCat.target_savings_account_id;
+          }
+          if (!existing.parent_id && rCat.parent_id) {
+            existing.parent_id = rCat.parent_id;
+          }
+          if (!existing.income_type && rCat.income_type) {
+            existing.income_type = rCat.income_type;
+          }
+          this.remapCategoryId(rCat.id, existing.id, workspaceId);
+          remoteDupCatIdsToPurge.push(rCat.id);
+        }
+      }
+
+      if (remoteDupCatIdsToPurge.length > 0) {
+        Promise.all(remoteDupCatIdsToPurge.map(id => supabaseSync.deleteCategory(id, workspaceId))).catch(() => {});
+      }
+
+      // 2. Build merged categories
+      const mergedCats: Category[] = [];
+      const mergedCatIds = new Set<string>();
+      const mergedCatKeys = new Set<string>();
+
+      for (const remoteCat of remoteDeduplicated) {
+        const normName = remoteCat.name.toLowerCase().trim();
+        const key = `${normName}::${remoteCat.type}`;
+        mergedCatIds.add(remoteCat.id);
+        mergedCatKeys.add(key);
+
+        const local = localMap.get(remoteCat.id) || localNameMap.get(normName);
         const isSaving = 
           remoteCat.type === 'saving' || 
           remoteCat.accounting_classification === 'asset_savings' ||
           local?.type === 'saving' ||
           local?.accounting_classification === 'asset_savings' ||
-          ['dps', 'dsp (baf)', 'unity fund-2026'].includes(remoteCat.name.toLowerCase());
+          ['dps', 'dsp (baf)', 'unity fund-2026'].includes(normName);
 
         mergedCats.push({
           ...remoteCat,
@@ -395,18 +485,32 @@ class DatabaseEngine {
           type: isSaving ? 'saving' : remoteCat.type,
           accounting_classification: isSaving ? ('asset_savings' as any) : (remoteCat.accounting_classification || 'expense_operating'),
           target_savings_account_id: remoteCat.target_savings_account_id || local?.target_savings_account_id,
-          // CRITICAL: Preserve local income_type if remote does not have it (e.g. migration pending)
           income_type: remoteCat.income_type || local?.income_type || (remoteCat.type === 'income' ? 'other' : undefined),
         });
       }
 
-      // Preserve any local categories created in the UI that haven't been fetched yet (unless deleted)
+      // 3. Preserve genuine local categories created in UI that haven't been fetched yet
       for (const local of localCats) {
-        if (!seenIds.has(local.id) && 
-            !data.categories.some(r => r.name.toLowerCase() === local.name.toLowerCase()) &&
-            !deletedCats.has(local.id.toLowerCase()) && 
-            !deletedCats.has(local.name.toLowerCase().trim())) {
+        const normName = local.name.toLowerCase().trim();
+        const key = `${normName}::${local.type}`;
+
+        if (deletedCats.has(local.id.toLowerCase()) || deletedCats.has(normName)) {
+          continue;
+        }
+
+        // If already exists remotely under a different ID, remap local references and do not duplicate
+        if (!mergedCatIds.has(local.id) && mergedCatKeys.has(key)) {
+          const matchingMerged = mergedCats.find(m => `${m.name.toLowerCase().trim()}::${m.type}` === key);
+          if (matchingMerged) {
+            this.remapCategoryId(local.id, matchingMerged.id, workspaceId);
+          }
+          continue;
+        }
+
+        if (!mergedCatIds.has(local.id) && !mergedCatKeys.has(key)) {
           mergedCats.push(local);
+          mergedCatIds.add(local.id);
+          mergedCatKeys.add(key);
           supabaseSync.syncCategory(local, workspaceId);
         }
       }
@@ -537,9 +641,40 @@ class DatabaseEngine {
     return this.getAccounts(workspaceId);
   }
 
-  // Financial Accounts with Live Dynamic Ledger-Derived Balances
+  // Financial Accounts with Self-Healing Deduplication and Live Dynamic Ledger-Derived Balances
   getAccounts(workspaceId: string): FinancialAccount[] {
-    const list = this.get<FinancialAccount[]>(STORAGE_KEYS.ACCOUNTS, []).filter(a => a.workspace_id === workspaceId);
+    const rawList = this.get<FinancialAccount[]>(STORAGE_KEYS.ACCOUNTS, []).filter(a => a.workspace_id === workspaceId);
+    
+    // Self-healing deduplication pass for localStorage
+    const deduplicated: FinancialAccount[] = [];
+    const seenNames = new Map<string, FinancialAccount>();
+    let hadDuplicates = false;
+
+    for (const a of rawList) {
+      const normName = a.name.toLowerCase().trim();
+      const existing = seenNames.get(normName);
+      if (!existing) {
+        seenNames.set(normName, a);
+        deduplicated.push(a);
+      } else {
+        hadDuplicates = true;
+        // Merge state: preserve non-zero balance
+        if ((!existing.current_balance_cached || existing.current_balance_cached === 0) && (a.current_balance_cached || a.opening_balance)) {
+          existing.current_balance_cached = a.current_balance_cached || a.opening_balance;
+          existing.opening_balance = a.opening_balance || existing.opening_balance;
+        }
+        // Remap any references pointing to this duplicate ID to the primary account ID
+        this.remapAccountId(a.id, existing.id, workspaceId);
+      }
+    }
+
+    if (hadDuplicates) {
+      const allAccs = this.get<FinancialAccount[]>(STORAGE_KEYS.ACCOUNTS, []);
+      const otherAccs = allAccs.filter(a => a.workspace_id !== workspaceId);
+      this.set(STORAGE_KEYS.ACCOUNTS, [...otherAccs, ...deduplicated]);
+    }
+
+    const list = deduplicated;
     const lines = this.get<JournalLine[]>(STORAGE_KEYS.JOURNAL_LINES, []).filter(l => l.workspace_id === workspaceId);
     const entries = this.get<JournalEntry[]>(STORAGE_KEYS.JOURNAL_ENTRIES, []).filter(e => e.workspace_id === workspaceId);
 
@@ -587,15 +722,27 @@ class DatabaseEngine {
 
   saveAccount(account: FinancialAccount): void {
     const list = this.get<FinancialAccount[]>(STORAGE_KEYS.ACCOUNTS, []);
-    const idx = list.findIndex(a => a.id === account.id);
+    const nameKey = account.name.toLowerCase().trim();
+    
+    // Find index by ID first, then by normalized name in the same workspace to prevent duplicate heads
+    let idx = list.findIndex(a => a.id === account.id);
+    if (idx === -1) {
+      idx = list.findIndex(a => a.workspace_id === account.workspace_id && a.name.toLowerCase().trim() === nameKey);
+    }
+
     if (idx >= 0) {
-      list[idx] = account;
+      const existingId = list[idx].id;
+      list[idx] = { ...list[idx], ...account, id: existingId };
+      if (account.id !== existingId) {
+        this.remapAccountId(account.id, existingId, account.workspace_id);
+      }
     } else {
       list.push(account);
     }
+
     // If account was marked as deleted, unmark it
     const deletedAccs = this.get<string[]>(STORAGE_KEYS.DELETED_ACCOUNTS, []);
-    const updatedDeleted = deletedAccs.filter(id => id !== account.id && id !== account.name.toLowerCase().trim());
+    const updatedDeleted = deletedAccs.filter(id => id !== account.id && id !== nameKey);
     if (updatedDeleted.length !== deletedAccs.length) {
       this.set(STORAGE_KEYS.DELETED_ACCOUNTS, updatedDeleted);
     }
@@ -603,7 +750,7 @@ class DatabaseEngine {
     supabaseSync.syncAccount(account, account.workspace_id);
   }
 
-  deleteAccount(arg1: string, arg2: string): void {
+  async deleteAccount(arg1: string, arg2: string): Promise<{ success: boolean; error?: string }> {
     const list = this.get<FinancialAccount[]>(STORAGE_KEYS.ACCOUNTS, []);
     let accountId = arg1;
     let workspaceId = arg2;
@@ -630,7 +777,7 @@ class DatabaseEngine {
     const cards = this.get<CreditCard[]>(STORAGE_KEYS.CREDIT_CARDS, []);
     this.set(STORAGE_KEYS.CREDIT_CARDS, cards.filter(c => c.account_id !== accountId));
 
-    supabaseSync.deleteAccount(accountId, workspaceId, acc?.name);
+    return await supabaseSync.deleteAccount(accountId, workspaceId, acc?.name);
   }
 
   // Journal Entries & Lines
@@ -1002,10 +1149,46 @@ class DatabaseEngine {
     return result;
   }
 
-  // Categories & Subcategories
+  // Categories & Subcategories with Self-Healing Deduplication
   getCategories(workspaceId: string): Category[] {
-    const list = this.get<Category[]>(STORAGE_KEYS.CATEGORIES, []);
-    return list.filter(c => c.workspace_id === workspaceId && !c.is_archived);
+    const rawList = this.get<Category[]>(STORAGE_KEYS.CATEGORIES, []).filter(c => c.workspace_id === workspaceId && !c.is_archived);
+    
+    // Deduplicate by normalized name + type
+    const deduplicated: Category[] = [];
+    const seen = new Map<string, Category>();
+    let hadDuplicates = false;
+
+    for (const c of rawList) {
+      const key = `${c.name.toLowerCase().trim()}::${c.type}`;
+      const existing = seen.get(key);
+      if (!existing) {
+        seen.set(key, c);
+        deduplicated.push(c);
+      } else {
+        hadDuplicates = true;
+        if (!existing.target_savings_account_id && c.target_savings_account_id) {
+          existing.target_savings_account_id = c.target_savings_account_id;
+        }
+        if (!existing.parent_id && c.parent_id) {
+          existing.parent_id = c.parent_id;
+        }
+        if (!existing.income_type && c.income_type) {
+          existing.income_type = c.income_type;
+        }
+        if (!existing.description && c.description) {
+          existing.description = c.description;
+        }
+        this.remapCategoryId(c.id, existing.id, workspaceId);
+      }
+    }
+
+    if (hadDuplicates) {
+      const allCats = this.get<Category[]>(STORAGE_KEYS.CATEGORIES, []);
+      const otherCats = allCats.filter(c => c.workspace_id !== workspaceId);
+      this.set(STORAGE_KEYS.CATEGORIES, [...otherCats, ...deduplicated]);
+    }
+
+    return deduplicated;
   }
 
   getRootCategories(workspaceId: string, type?: Category['type']): Category[] {
@@ -1018,16 +1201,27 @@ class DatabaseEngine {
 
   async saveCategory(cat: Category): Promise<{ success: boolean; id?: string; error?: string }> {
     const list = this.get<Category[]>(STORAGE_KEYS.CATEGORIES, []);
-    const idx = list.findIndex(c => c.id === cat.id);
+    const nameKey = cat.name.toLowerCase().trim();
+    
+    // Match by ID first; if not found, match by workspace + name + type to prevent duplicate category heads
+    let idx = list.findIndex(c => c.id === cat.id);
+    if (idx === -1) {
+      idx = list.findIndex(c => c.workspace_id === cat.workspace_id && c.name.toLowerCase().trim() === nameKey && c.type === cat.type);
+    }
+
     if (idx >= 0) {
-      list[idx] = cat;
+      const existingId = list[idx].id;
+      list[idx] = { ...list[idx], ...cat, id: existingId };
+      if (cat.id !== existingId) {
+        this.remapCategoryId(cat.id, existingId, cat.workspace_id);
+      }
     } else {
       list.push(cat);
     }
+
     // If this category was previously marked as deleted, unmark it
     const deleted = this.get<string[]>(STORAGE_KEYS.DELETED_CATEGORIES, []);
-    const nameLower = cat.name.toLowerCase().trim();
-    const updatedDeleted = deleted.filter(d => d !== cat.id && d !== nameLower);
+    const updatedDeleted = deleted.filter(d => d !== cat.id && d !== nameKey);
     if (updatedDeleted.length !== deleted.length) {
       this.set(STORAGE_KEYS.DELETED_CATEGORIES, updatedDeleted);
     }
@@ -1063,18 +1257,39 @@ class DatabaseEngine {
   remapCategoryId(oldId: string, newId: string, workspaceId: string): void {
     if (oldId === newId) return;
     const cats = this.get<Category[]>(STORAGE_KEYS.CATEGORIES, []);
-    let updatedCats = false;
-    cats.forEach(c => {
-      if (c.id === oldId) {
-        c.id = newId;
-        updatedCats = true;
+    const oldCat = cats.find(c => c.id === oldId);
+    const newCat = cats.find(c => c.id === newId);
+
+    if (oldCat && newCat) {
+      if (!newCat.target_savings_account_id && oldCat.target_savings_account_id) {
+        newCat.target_savings_account_id = oldCat.target_savings_account_id;
       }
+      if (!newCat.parent_id && oldCat.parent_id) {
+        newCat.parent_id = oldCat.parent_id;
+      }
+      if (!newCat.income_type && oldCat.income_type) {
+        newCat.income_type = oldCat.income_type;
+      }
+      if (!newCat.description && oldCat.description) {
+        newCat.description = oldCat.description;
+      }
+      // Remove the old duplicate object
+      this.set(STORAGE_KEYS.CATEGORIES, cats.filter(c => c.id !== oldId));
+    } else if (oldCat && !newCat) {
+      oldCat.id = newId;
+      this.set(STORAGE_KEYS.CATEGORIES, cats);
+    }
+
+    // Remap parent references
+    const allCats = this.get<Category[]>(STORAGE_KEYS.CATEGORIES, []);
+    let updatedParent = false;
+    allCats.forEach(c => {
       if (c.parent_id === oldId) {
         c.parent_id = newId;
-        updatedCats = true;
+        updatedParent = true;
       }
     });
-    if (updatedCats) this.set(STORAGE_KEYS.CATEGORIES, cats);
+    if (updatedParent) this.set(STORAGE_KEYS.CATEGORIES, allCats);
 
     const lines = this.get<JournalLine[]>(STORAGE_KEYS.JOURNAL_LINES, []);
     let updatedLines = false;
@@ -1110,14 +1325,22 @@ class DatabaseEngine {
   remapAccountId(oldId: string, newId: string, workspaceId: string): void {
     if (oldId === newId) return;
     const accs = this.get<FinancialAccount[]>(STORAGE_KEYS.ACCOUNTS, []);
-    let updatedAccs = false;
-    accs.forEach(a => {
-      if (a.id === oldId) {
-        a.id = newId;
-        updatedAccs = true;
+    const oldAcc = accs.find(a => a.id === oldId);
+    const newAcc = accs.find(a => a.id === newId);
+
+    if (oldAcc && newAcc) {
+      if ((!newAcc.current_balance_cached || newAcc.current_balance_cached === 0) && oldAcc.current_balance_cached) {
+        newAcc.current_balance_cached = oldAcc.current_balance_cached;
       }
-    });
-    if (updatedAccs) this.set(STORAGE_KEYS.ACCOUNTS, accs);
+      if ((!newAcc.opening_balance || newAcc.opening_balance === 0) && oldAcc.opening_balance) {
+        newAcc.opening_balance = oldAcc.opening_balance;
+      }
+      // Remove old duplicate object
+      this.set(STORAGE_KEYS.ACCOUNTS, accs.filter(a => a.id !== oldId));
+    } else if (oldAcc && !newAcc) {
+      oldAcc.id = newId;
+      this.set(STORAGE_KEYS.ACCOUNTS, accs);
+    }
 
     const lines = this.get<JournalLine[]>(STORAGE_KEYS.JOURNAL_LINES, []);
     let updatedLines = false;
@@ -1168,6 +1391,20 @@ class DatabaseEngine {
       }
     });
     if (updatedCats) this.set(STORAGE_KEYS.CATEGORIES, cats);
+
+    const rules = this.get<RecurringRule[]>(STORAGE_KEYS.RECURRING_RULES, []);
+    let updatedRules = false;
+    rules.forEach(r => {
+      if (r.source_account_id === oldId) {
+        r.source_account_id = newId;
+        updatedRules = true;
+      }
+      if (r.destination_account_id === oldId) {
+        r.destination_account_id = newId;
+        updatedRules = true;
+      }
+    });
+    if (updatedRules) this.set(STORAGE_KEYS.RECURRING_RULES, rules);
   }
 
   // Credit Cards
