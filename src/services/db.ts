@@ -290,6 +290,7 @@ class DatabaseEngine {
     entries?: JournalEntry[];
     budgets?: Budget[];
     goals?: SavingsGoal[];
+    rules?: RecurringRule[];
   }, workspaceId: string): void {
     if (data.accounts !== undefined) {
       const allAccs = this.get<FinancialAccount[]>(STORAGE_KEYS.ACCOUNTS, []);
@@ -333,8 +334,18 @@ class DatabaseEngine {
       for (const remoteCat of data.categories) {
         seenIds.add(remoteCat.id);
         const local = localMap.get(remoteCat.id) || localNameMap.get(remoteCat.name.toLowerCase());
+        const isSaving = 
+          remoteCat.type === 'saving' || 
+          remoteCat.accounting_classification === 'asset_savings' ||
+          local?.type === 'saving' ||
+          local?.accounting_classification === 'asset_savings' ||
+          ['dps', 'dsp (baf)', 'unity fund-2026'].includes(remoteCat.name.toLowerCase());
+
         mergedCats.push({
           ...remoteCat,
+          type: isSaving ? 'saving' : remoteCat.type,
+          accounting_classification: isSaving ? ('asset_savings' as any) : (remoteCat.accounting_classification || 'expense_operating'),
+          target_savings_account_id: remoteCat.target_savings_account_id || local?.target_savings_account_id,
           // CRITICAL: Preserve local income_type if remote does not have it (e.g. migration pending)
           income_type: remoteCat.income_type || local?.income_type || (remoteCat.type === 'income' ? 'other' : undefined),
         });
@@ -369,6 +380,10 @@ class DatabaseEngine {
     if (data.goals !== undefined) {
       const otherGoals = this.get<SavingsGoal[]>(STORAGE_KEYS.SAVINGS_GOALS, []).filter(g => g.workspace_id !== workspaceId);
       this.set(STORAGE_KEYS.SAVINGS_GOALS, [...otherGoals, ...data.goals]);
+    }
+    if (data.rules !== undefined) {
+      const otherRules = this.get<RecurringRule[]>(STORAGE_KEYS.RECURRING_RULES, []).filter(r => r.workspace_id !== workspaceId);
+      this.set(STORAGE_KEYS.RECURRING_RULES, [...otherRules, ...data.rules]);
     }
     if (data.entries !== undefined) {
       const otherEntries = this.get<JournalEntry[]>(STORAGE_KEYS.JOURNAL_ENTRIES, []).filter(e => e.workspace_id !== workspaceId);
@@ -1099,6 +1114,19 @@ class DatabaseEngine {
       list.push(rule);
     }
     this.set(STORAGE_KEYS.RECURRING_RULES, list);
+    supabaseSync.syncRecurringRule(rule, rule.workspace_id);
+  }
+
+  deleteRecurringRule(arg1: string, arg2: string): void {
+    const list = this.get<RecurringRule[]>(STORAGE_KEYS.RECURRING_RULES, []);
+    let ruleId = arg1;
+    let workspaceId = arg2;
+    if (list.some(r => r.id === arg2) && !list.some(r => r.id === arg1)) {
+      ruleId = arg2;
+      workspaceId = arg1;
+    }
+    this.set(STORAGE_KEYS.RECURRING_RULES, list.filter(r => r.id !== ruleId));
+    supabaseSync.deleteRecurringRule(ruleId, workspaceId);
   }
 
   // Audit Logs

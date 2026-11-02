@@ -607,50 +607,45 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
   const targetSavingsAcc = accounts.find(a => a.id === targetSavingsAccountId);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 overflow-y-auto">
-      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-lg w-full p-6 shadow-2xl transition-all my-8">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-3 sm:p-4 overflow-y-auto">
+      <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl max-w-lg w-full max-h-[92vh] flex flex-col p-4 sm:p-5 shadow-2xl transition-all">
         {/* Header */}
-        <div className="flex items-center justify-between pb-4 border-b border-slate-100 dark:border-slate-800">
-          <div>
-            <h3 className="text-base font-bold text-slate-900 dark:text-white">
-              {entryToEdit ? 'Edit Transaction' : 'Record Transaction'}
-            </h3>
-            <p className="text-xs text-slate-500 dark:text-slate-400">
-              Balanced double-entry accounting with real-time Supabase synchronization.
-            </p>
-          </div>
+        <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800 shrink-0">
+          <h3 className="text-base font-bold text-slate-900 dark:text-white">
+            {entryToEdit ? 'Edit Transaction' : 'Record Transaction'}
+          </h3>
           <button
             onClick={onClose}
-            className="p-1 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+            className="p-1 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 cursor-pointer"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        {/* Mode Selector Tabs (4 Modes: Expense, Income, Saving Allocation, Transfer) */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl my-4 text-xs font-semibold">
+        {/* Mode Selector Tabs (Expense, Income, Saving, Transfer) */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-1 p-1 bg-slate-100 dark:bg-slate-800 rounded-xl my-3 text-xs font-semibold shrink-0">
           <button
             type="button"
             onClick={() => setMode('expense')}
-            className={`flex items-center justify-center gap-1.5 py-2 rounded-lg transition-colors ${
+            className={`flex items-center justify-center gap-1.5 py-1.5 rounded-lg transition-colors cursor-pointer ${
               mode === 'expense'
                 ? 'bg-white dark:bg-slate-700 text-rose-600 dark:text-rose-400 shadow-xs'
                 : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
             }`}
           >
-            <ArrowDownRight className="w-4 h-4" />
+            <ArrowDownRight className="w-3.5 h-3.5" />
             <span>Expense</span>
           </button>
           <button
             type="button"
             onClick={() => setMode('income')}
-            className={`flex items-center justify-center gap-1.5 py-2 rounded-lg transition-colors ${
+            className={`flex items-center justify-center gap-1.5 py-1.5 rounded-lg transition-colors cursor-pointer ${
               mode === 'income'
                 ? 'bg-white dark:bg-slate-700 text-emerald-600 dark:text-emerald-400 shadow-xs'
                 : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
             }`}
           >
-            <ArrowUpRight className="w-4 h-4" />
+            <ArrowUpRight className="w-3.5 h-3.5" />
             <span>Income</span>
           </button>
           <button
@@ -665,59 +660,59 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
                 }
               }
             }}
-            className={`flex items-center justify-center gap-1.5 py-2 rounded-lg transition-colors ${
+            className={`flex items-center justify-center gap-1.5 py-1.5 rounded-lg transition-colors cursor-pointer ${
               mode === 'saving'
                 ? 'bg-white dark:bg-slate-700 text-teal-600 dark:text-teal-400 shadow-xs'
                 : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
             }`}
           >
-            <PiggyBank className="w-4 h-4" />
+            <PiggyBank className="w-3.5 h-3.5" />
             <span>Saving</span>
           </button>
           <button
             type="button"
             onClick={() => setMode('transfer')}
-            className={`flex items-center justify-center gap-1.5 py-2 rounded-lg transition-colors ${
+            className={`flex items-center justify-center gap-1.5 py-1.5 rounded-lg transition-colors cursor-pointer ${
               mode === 'transfer'
                 ? 'bg-white dark:bg-slate-700 text-indigo-600 dark:text-indigo-400 shadow-xs'
                 : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
             }`}
           >
-            <ArrowRightLeft className="w-4 h-4" />
+            <ArrowRightLeft className="w-3.5 h-3.5" />
             <span>Transfer</span>
           </button>
         </div>
 
         {errorMsg && (
-          <div className="flex items-center gap-2 p-3 mb-4 rounded-lg bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 text-xs">
+          <div className="flex items-center gap-2 p-2.5 mb-3 rounded-lg bg-rose-50 dark:bg-rose-950/50 border border-rose-200 dark:border-rose-800 text-rose-700 dark:text-rose-300 text-xs shrink-0">
             <AlertCircle className="w-4 h-4 shrink-0" />
             <span>{errorMsg}</span>
           </div>
         )}
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto space-y-3 pr-1 pb-1">
           {/* Amount & Date Configuration */}
-          <div className="space-y-3">
+          <div className="space-y-2.5">
             <div>
               <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                 Amount ({currentWorkspace?.currency || 'BDT'})
               </label>
               <div className="relative">
-                <span className="absolute left-3 top-2.5 text-sm font-bold text-slate-400 pointer-events-none">
+                <span className="absolute left-3 top-2 text-sm font-bold text-slate-400 pointer-events-none">
                   ৳
                 </span>
                 <NumericInput
                   placeholder="0.00"
                   value={amount}
                   onChange={(e) => setAmount(e.target.value)}
-                  className="w-full pl-8 pr-3 py-2.5 text-base font-mono font-bold rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500 shadow-xs"
+                  className="w-full pl-8 pr-3 py-2 text-base font-mono font-bold rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500 shadow-xs"
                   required
                 />
               </div>
             </div>
 
-            {/* Date Mode Toggle: Single Date vs Period / Date Range (e.g. 01 Jan 2025 to 31 Dec 2026) */}
-            <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 space-y-2.5">
+            {/* Date Mode Toggle: Single Date vs Period / Date Range */}
+            <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 space-y-2">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
                   <Calendar className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
@@ -727,7 +722,7 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
                   <button
                     type="button"
                     onClick={() => setIsDateRange(false)}
-                    className={`px-2.5 py-1 rounded-md transition-all ${
+                    className={`px-2 py-0.5 rounded-md transition-all cursor-pointer ${
                       !isDateRange
                         ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-xs font-bold'
                         : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
@@ -743,73 +738,66 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
                         setPeriodEndDate(date);
                       }
                     }}
-                    className={`px-2.5 py-1 rounded-md transition-all flex items-center gap-1 ${
+                    className={`px-2 py-0.5 rounded-md transition-all flex items-center gap-1 cursor-pointer ${
                       isDateRange
                         ? 'bg-white dark:bg-slate-900 text-emerald-600 dark:text-emerald-400 shadow-xs font-bold'
                         : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
                     }`}
                   >
                     <CalendarRange className="w-3 h-3" />
-                    Date Period / Span
+                    Date Span
                   </button>
                 </div>
               </div>
 
               {!isDateRange ? (
                 <div>
-                  <label className="block text-2xs font-medium text-slate-500 dark:text-slate-400 mb-1">
-                    Transaction Date
-                  </label>
                   <input
                     type="date"
                     value={date}
                     onChange={(e) => setDate(e.target.value)}
-                    className="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500"
+                    className="w-full px-3 py-1.5 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500"
                     required
                   />
                 </div>
               ) : (
-                <div className="space-y-2">
-                  <div className="grid grid-cols-2 gap-2.5">
+                <div className="space-y-1.5">
+                  <div className="grid grid-cols-2 gap-2">
                     <div>
-                      <label className="block text-2xs font-medium text-slate-500 dark:text-slate-400 mb-1">
-                        From (Start Date)
+                      <label className="block text-3xs font-medium text-slate-500 dark:text-slate-400 mb-0.5">
+                        Start Date
                       </label>
                       <input
                         type="date"
                         value={date}
                         onChange={(e) => setDate(e.target.value)}
-                        className="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500"
+                        className="w-full px-2.5 py-1.5 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500"
                         required
                       />
                     </div>
                     <div>
-                      <label className="block text-2xs font-medium text-slate-500 dark:text-slate-400 mb-1">
-                        To (End Date)
+                      <label className="block text-3xs font-medium text-slate-500 dark:text-slate-400 mb-0.5">
+                        End Date
                       </label>
                       <input
                         type="date"
                         value={periodEndDate}
                         onChange={(e) => setPeriodEndDate(e.target.value)}
-                        className="w-full px-3 py-2 text-sm rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500"
+                        className="w-full px-2.5 py-1.5 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500"
                         required
                       />
                     </div>
                   </div>
                   {periodEndDate && (
-                    <div className="flex items-center justify-between text-3xs px-2.5 py-1.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200/80 dark:border-emerald-800/60 text-emerald-700 dark:text-emerald-300">
-                      <span className="font-semibold flex items-center gap-1">
-                        <CalendarRange className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
-                        Span: {date} → {periodEndDate}
+                    <div className="flex items-center justify-between text-3xs px-2 py-1 rounded-md bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200/80 dark:border-emerald-800/60 text-emerald-700 dark:text-emerald-300">
+                      <span className="font-medium">
+                        {date} → {periodEndDate}
                       </span>
                       <span className="font-mono font-medium">
                         {getPeriodDurationLabel(date, periodEndDate)}
                       </span>
                     </div>
                   )}
-                  <p className="text-3xs text-slate-500 dark:text-slate-400">
-                    💡 Perfect for cumulative entries (e.g. 01 Jan 2025 to 31 Dec 2026), yearly retainers, or lump-sum prior records.
-                  </p>
                 </div>
               )}
             </div>
@@ -817,8 +805,8 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
 
           {/* Accounts & Category with Inline Add & Edit Dropdowns */}
           {mode === 'expense' && (
-            <div className="space-y-3">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="space-y-2.5">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                 <EditableSelect
                   label="Paid From (Account)"
                   options={accountOptions}
@@ -843,37 +831,32 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
 
               {/* Dynamic Target Savings Head Selection if Expense category is a Saving Head */}
               {(selectedCat?.type === 'saving' || selectedCat?.accounting_classification === 'asset_savings') && (
-                <div className="p-3.5 rounded-xl bg-teal-50/80 dark:bg-teal-950/40 border border-teal-200 dark:border-teal-800/80 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <label className="text-xs font-bold text-teal-800 dark:text-teal-300 flex items-center gap-1.5">
-                      <PiggyBank className="w-4 h-4 text-teal-600 dark:text-teal-400" />
-                      <span>Target Savings Head / Reserved Fund</span>
-                    </label>
-                  </div>
+                <div className="p-2.5 rounded-xl bg-teal-50/80 dark:bg-teal-950/40 border border-teal-200 dark:border-teal-800/80 space-y-1.5">
+                  <label className="text-xs font-semibold text-teal-800 dark:text-teal-300 flex items-center gap-1.5">
+                    <PiggyBank className="w-3.5 h-3.5 text-teal-600 dark:text-teal-400" />
+                    <span>Target Savings Head / Reserved Fund</span>
+                  </label>
                   <EditableSelect
                     options={savingsAccountOptions}
                     value={targetSavingsAccountId}
                     onChange={setTargetSavingsAccountId}
                     onAddNew={handleAddNewSavingsHead}
                     onEditSelected={handleEditSavingsHead}
-                    placeholder="Select target savings head (e.g. DSPF, Unity Fund)"
+                    placeholder="Select target savings head"
                     addNewTitle="New Savings Head"
                     editTitle="Edit Head Name"
                     required
                   />
-                  <p className="text-3xs text-teal-700 dark:text-teal-300 leading-relaxed">
-                    ✨ <strong>Saving Head Detected:</strong> This will deduct {amount ? formatMoney(parseFloat(amount) || 0) : 'funds'} from {sourceAcc?.name || 'paying account'} and deposit directly into your <strong>{targetSavingsAcc?.name || 'Dedicated Savings Head'}</strong>, increasing your real-time savings balance in the Accounts Cockpit.
-                  </p>
                 </div>
               )}
             </div>
           )}
 
           {mode === 'saving' && (
-            <div className="space-y-3">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="space-y-2.5">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                 <EditableSelect
-                  label="Paid From (Liquid Account / Wallet)"
+                  label="Paid From (Wallet / Account)"
                   options={accountOptions}
                   value={sourceAccountId}
                   onChange={setSourceAccountId}
@@ -894,33 +877,28 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
                 />
               </div>
 
-              <div className="p-3.5 rounded-xl bg-teal-50/80 dark:bg-teal-950/40 border border-teal-200 dark:border-teal-800/80 space-y-2">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-bold text-teal-800 dark:text-teal-300 flex items-center gap-1.5">
-                    <PiggyBank className="w-4 h-4 text-teal-600 dark:text-teal-400" />
-                    <span>Target Savings Head / Reserved Fund</span>
-                  </label>
-                </div>
+              <div className="p-2.5 rounded-xl bg-teal-50/80 dark:bg-teal-950/40 border border-teal-200 dark:border-teal-800/80 space-y-1.5">
+                <label className="text-xs font-semibold text-teal-800 dark:text-teal-300 flex items-center gap-1.5">
+                  <PiggyBank className="w-3.5 h-3.5 text-teal-600 dark:text-teal-400" />
+                  <span>Target Savings Head</span>
+                </label>
                 <EditableSelect
                   options={savingsAccountOptions}
                   value={targetSavingsAccountId}
                   onChange={setTargetSavingsAccountId}
                   onAddNew={handleAddNewSavingsHead}
                   onEditSelected={handleEditSavingsHead}
-                  placeholder="Select target savings head (e.g. DSPF, Unity Fund)"
+                  placeholder="Select target savings head"
                   addNewTitle="New Savings Head"
                   editTitle="Edit Head Name"
                   required
                 />
-                <p className="text-3xs text-teal-700 dark:text-teal-300 leading-relaxed">
-                  ✨ <strong>Dedicated Savings Flow:</strong> Deducts from {sourceAcc?.name || 'Liquid Wallet'} and adds directly into your <strong>{targetSavingsAcc?.name || 'Savings Head'}</strong> without distorting operational burn expenses.
-                </p>
               </div>
             </div>
           )}
 
           {mode === 'income' && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
               <EditableSelect
                 label="Deposit To (Account)"
                 options={accountOptions}
@@ -945,7 +923,7 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
           )}
 
           {mode === 'transfer' && (
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
               <EditableSelect
                 label="From Account (Source)"
                 options={accountOptions}
@@ -976,10 +954,10 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
             </label>
             <input
               type="text"
-              placeholder="e.g. Monthly Wi-Fi bill payment, Remote client contract invoice"
+              placeholder="e.g. Wi-Fi bill, Remote salary, Grocery, DPS installment"
               value={memo}
               onChange={(e) => setMemo(e.target.value)}
-              className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500"
+              className="w-full px-3 py-1.5 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500"
               required
             />
           </div>
@@ -991,69 +969,51 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
             </label>
             <input
               type="text"
-              placeholder="e.g. Link3 Technologies, Shwapno Supermarket, Upwork Client"
+              placeholder="e.g. Link3, DESCO, Upwork, Shwapno"
               value={counterparty}
               onChange={(e) => setCounterparty(e.target.value)}
-              className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500"
+              className="w-full px-3 py-1.5 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white focus:ring-2 focus:ring-emerald-500"
             />
           </div>
 
-          {/* CRITICAL FEATURE: Historical / Previous Database Entry Toggle */}
-          <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700/80 space-y-2">
-            <label className="flex items-start gap-2.5 cursor-pointer">
+          {/* Prior Period / Past Entry Toggle */}
+          <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700/80 space-y-1.5">
+            <label className="flex items-center gap-2 cursor-pointer">
               <input
                 type="checkbox"
                 checked={isHistorical}
                 onChange={(e) => setIsHistorical(e.target.checked)}
-                className="mt-0.5 rounded-sm border-slate-300 text-emerald-600 focus:ring-emerald-500"
+                className="rounded-sm border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
               />
-              <div>
-                <span className="text-xs font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
-                  <History className="w-3.5 h-3.5 text-amber-500" />
-                  <span>Prior Period / Previous Database Entry</span>
-                </span>
-                <p className="text-2xs text-slate-500 dark:text-slate-400 mt-0.5 leading-relaxed">
-                  Check this if this entry originates from your previous records or prior-year books. The date will not distort single-day spike velocity statistics, but will establish your cumulative past baseline and ledger equity.
-                </p>
-              </div>
+              <span className="text-xs font-semibold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                <History className="w-3.5 h-3.5 text-amber-500" />
+                <span>Prior Period / Past Entry</span>
+              </span>
             </label>
 
             {isHistorical && (
-              <div className="pt-2 border-t border-slate-200 dark:border-slate-700">
-                <label className="block text-2xs font-semibold text-slate-600 dark:text-slate-300 mb-1">
-                  Historical Period Note / Legacy Reference (Optional)
-                </label>
+              <div className="pt-1.5">
                 <input
                   type="text"
-                  placeholder="e.g. FY 2024-2025 Opening Balance, Previous Excel migration"
+                  placeholder="Historical reference (e.g. FY 2024-2025 Opening Balance, Excel record)"
                   value={historicalNote}
                   onChange={(e) => setHistoricalNote(e.target.value)}
-                  className="w-full px-2.5 py-1.5 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white outline-hidden focus:border-amber-500"
+                  className="w-full px-2.5 py-1 text-xs rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white outline-hidden focus:border-amber-500"
                 />
               </div>
             )}
           </div>
 
-          {/* Accounting Guardrail Callout */}
-          <div className="p-2.5 rounded-lg bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 text-2xs text-slate-500 dark:text-slate-400 flex items-start gap-2">
-            <Scale className="w-3.5 h-3.5 text-slate-400 shrink-0 mt-0.5" />
-            <span>
-              {mode === 'transfer'
-                ? 'Double-entry transfer adjusts account balances without affecting income or expense reports.'
-                : 'Debits and credits will balance automatically and post to your immutable ledger.'}
-            </span>
-          </div>
-
           {/* Submit & Delete Actions */}
-          <div className="flex items-center justify-between pt-3 border-t border-slate-100 dark:border-slate-800">
+          <div className="flex items-center justify-between pt-3 border-t border-slate-100 dark:border-slate-800 shrink-0 mt-2">
             <div>
               {entryToEdit && (
                 <button
                   type="button"
                   onClick={handleDeleteEntry}
-                  className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/60 rounded-lg transition-colors"
+                  className="flex items-center gap-1 px-3 py-1.5 text-xs font-semibold text-rose-600 dark:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/60 rounded-lg transition-colors cursor-pointer"
                 >
-                  <Trash2 className="w-4 h-4" />
+                  <Trash2 className="w-3.5 h-3.5" />
                   <span>Delete</span>
                 </button>
               )}
@@ -1063,15 +1023,15 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
               <button
                 type="button"
                 onClick={onClose}
-                className="px-4 py-2 text-xs font-medium text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
+                className="px-3 py-1.5 text-xs font-medium text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white cursor-pointer"
               >
                 Cancel
               </button>
               <button
                 type="submit"
-                className="px-5 py-2 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-500 rounded-lg shadow-xs transition-colors"
+                className="px-4 py-1.5 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-500 rounded-lg shadow-xs transition-colors cursor-pointer"
               >
-                {entryToEdit ? 'Update Transaction' : 'Post to Ledger'}
+                {entryToEdit ? 'Update Transaction' : 'Post Transaction'}
               </button>
             </div>
           </div>

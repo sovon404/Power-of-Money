@@ -16,7 +16,8 @@ import {
   Edit2,
   Wallet,
   Landmark,
-  ArrowRight
+  ArrowRight,
+  Trash2
 } from 'lucide-react';
 import { useWorkspace } from '../../context/WorkspaceContext';
 import { db } from '../../services/db';
@@ -146,15 +147,30 @@ export const SettingsView: React.FC = () => {
     refreshData();
   };
 
+  const handleDeleteCategory = (cat: Category) => {
+    if (window.confirm(`Are you sure you want to permanently delete category "${cat.name}"?`)) {
+      db.deleteCategory(cat.id, workspaceId);
+      refreshData();
+    }
+  };
+
+  const isSavingCategory = (c: Category) => 
+    c.type === 'saving' || 
+    c.accounting_classification === 'asset_savings' || 
+    Boolean(c.target_savings_account_id) ||
+    ['dps', 'dsp (baf)', 'unity fund-2026', 'los fund (installment)', 'friends fund installment'].includes(c.name.toLowerCase());
+
   const filteredCategories = categories.filter(c => {
     if (catFilter === 'all') return true;
-    if (catFilter === 'saving') return c.type === 'saving' || c.accounting_classification === 'asset_savings';
+    if (catFilter === 'saving') return isSavingCategory(c);
+    if (catFilter === 'expense') return c.type === 'expense' && !isSavingCategory(c);
+    if (catFilter === 'income') return c.type === 'income';
     return c.type === catFilter;
   });
 
-  const expenseCount = categories.filter(c => c.type === 'expense').length;
+  const expenseCount = categories.filter(c => c.type === 'expense' && !isSavingCategory(c)).length;
   const incomeCount = categories.filter(c => c.type === 'income').length;
-  const savingCount = categories.filter(c => c.type === 'saving' || c.accounting_classification === 'asset_savings').length;
+  const savingCount = categories.filter(c => isSavingCategory(c)).length;
 
   const copyMigrationList = () => {
     const text = `-- Power of Money: Execute these migrations in Supabase SQL Editor in order:
@@ -332,10 +348,17 @@ export const SettingsView: React.FC = () => {
                       </button>
                       <button
                         onClick={() => handleToggleArchive(cat)}
-                        title="Archive this category"
+                        title={cat.is_archived ? "Unarchive category" : "Archive category"}
                         className="p-1 rounded text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
                       >
                         <Archive className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={() => handleDeleteCategory(cat)}
+                        title="Delete category"
+                        className="p-1 rounded text-slate-400 hover:text-rose-600 dark:hover:text-rose-400"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
                       </button>
                     </div>
                   )}

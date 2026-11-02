@@ -85,7 +85,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
     { key: 'reports', label: 'Reports & Analytics', icon: BarChart3 },
     { key: 'family', label: 'Family Collaboration', icon: Users },
     { key: 'ai', label: 'AI Receipt & Advisor', icon: Sparkles },
-    { key: 'setup', label: 'Opening Balances', icon: Sliders },
     { key: 'settings', label: 'Settings & Categories', icon: Settings },
   ];
 

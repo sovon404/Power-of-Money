@@ -9,7 +9,8 @@ import {
   Loan, 
   Property, 
   Budget, 
-  SavingsGoal 
+  SavingsGoal,
+  RecurringRule 
 } from '../types';
 
 class SupabaseSyncEngine {
@@ -555,6 +556,46 @@ class SupabaseSyncEngine {
     }
   }
 
+  // 11. Sync Recurring Transaction Rule & Bill
+  async syncRecurringRule(rule: RecurringRule, workspaceId: string) {
+    if (!this.isAvailable()) return;
+    const wsUuid = toUuid(workspaceId);
+    try {
+      await this.ensureRemoteWorkspace(workspaceId);
+      if (rule.source_account_id) {
+        await this.ensureRemoteAccount(rule.source_account_id, workspaceId);
+      }
+      if (rule.destination_account_id) {
+        await this.ensureRemoteAccount(rule.destination_account_id, workspaceId);
+      }
+      if (rule.category_id) {
+        await this.ensureRemoteCategory(rule.category_id, workspaceId);
+      }
+
+      await supabase.from('recurring_rules').upsert({
+        id: toUuid(rule.id),
+        workspace_id: wsUuid,
+        name: rule.name,
+        rule_type: rule.rule_type || 'expense',
+        amount: rule.amount,
+        currency: rule.currency || 'BDT',
+        frequency: rule.frequency || 'monthly',
+        start_date: rule.start_date,
+        end_date: rule.end_date || null,
+        next_due_date: rule.next_due_date,
+        source_account_id: rule.source_account_id ? toUuid(rule.source_account_id) : null,
+        destination_account_id: rule.destination_account_id ? toUuid(rule.destination_account_id) : null,
+        category_id: rule.category_id ? toUuid(rule.category_id) : null,
+        auto_post: Boolean(rule.auto_post),
+        is_active: Boolean(rule.is_active),
+        notes: rule.notes || null,
+        updated_at: new Date().toISOString(),
+      });
+    } catch (err) {
+      console.warn('Sync recurring rule error:', err);
+    }
+  }
+
   // Hydrate all workspace entities from Supabase to local client
   async pullRemoteWorkspaceData(workspaceId: string) {
     if (!this.isAvailable()) return null;
@@ -569,7 +610,8 @@ class SupabaseSyncEngine {
         propertiesRes, 
         entriesRes,
         budgetsRes,
-        goalsRes
+        goalsRes,
+        rulesRes
       ] = await Promise.all([
         supabase.from('financial_accounts').select('*').eq('workspace_id', wsUuid),
         supabase.from('categories').select('*').eq('workspace_id', wsUuid),
@@ -579,6 +621,7 @@ class SupabaseSyncEngine {
         supabase.from('journal_entries').select('*, lines:journal_lines(*)').eq('workspace_id', wsUuid),
         supabase.from('budgets').select('*').eq('workspace_id', wsUuid),
         supabase.from('savings_goals').select('*').eq('workspace_id', wsUuid),
+        supabase.from('recurring_rules').select('*').eq('workspace_id', wsUuid),
       ]);
 
       return {
@@ -590,6 +633,7 @@ class SupabaseSyncEngine {
         entries: entriesRes.data || [],
         budgets: budgetsRes.data || [],
         goals: goalsRes.data || [],
+        rules: rulesRes.data || [],
       };
     } catch (err) {
       console.warn('Pull remote data notice:', err);
@@ -708,6 +752,19 @@ class SupabaseSyncEngine {
       if (error) console.error('Delete category error from Supabase:', error);
     } catch (err) {
       console.warn('Delete category error:', err);
+    }
+  }
+
+  async deleteRecurringRule(ruleId: string, workspaceId: string) {
+    if (!this.isAvailable()) return;
+    const ruleUuid = toUuid(ruleId);
+    const wsUuid = toUuid(workspaceId);
+    try {
+      await supabase.from('recurring_executions').delete().eq('recurring_rule_id', ruleUuid);
+      const { error } = await supabase.from('recurring_rules').delete().eq('id', ruleUuid).eq('workspace_id', wsUuid);
+      if (error) console.error('Delete recurring rule error from Supabase:', error);
+    } catch (err) {
+      console.warn('Delete recurring rule error:', err);
     }
   }
 }

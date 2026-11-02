@@ -35,11 +35,9 @@ export const WorkspaceProvider: React.FC<WorkspaceProviderProps> = ({ children, 
   const [isSyncingWithDb, setIsSyncingWithDb] = useState(false);
   const [lastDbSyncTime, setLastDbSyncTime] = useState<string | null>(null);
 
-  // Initial setup check scoped to user
+  // Initial setup permanently marked done
   const setupKey = `pom_setup_completed_${authUser.id}`;
-  const [isInitialSetupDone, setIsInitialSetupDone] = useState<boolean>(() => {
-    return localStorage.getItem(setupKey) === 'true';
-  });
+  const [isInitialSetupDone, setIsInitialSetupDone] = useState<boolean>(true);
 
   const refreshData = useCallback(() => {
     setRefreshKey(prev => prev + 1);

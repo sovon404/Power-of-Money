@@ -125,21 +125,6 @@ const AppContent: React.FC<AppContentProps> = ({ onSignOut }) => {
           onOpenAiScan={handleOpenAiScan}
         />
 
-        {/* Setup Banner Notice if not completed yet */}
-        {!isInitialSetupDone && activeView !== 'setup' && (
-          <div className="mx-4 sm:mx-6 mt-4 p-3.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/60 border border-emerald-200 dark:border-emerald-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-emerald-900 dark:text-emerald-200 shadow-xs">
-            <div>
-              <strong className="font-semibold block sm:inline mr-2">Fresh Workspace Initialized:</strong>
-              <span>Enter your real opening bank, cash, and bKash balances to establish Opening Equity.</span>
-            </div>
-            <button
-              onClick={() => navigateTo('setup')}
-              className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold transition-colors shrink-0 text-left sm:text-center"
-            >
-              Start Opening Wizard &rarr;
-            </button>
-          </div>
-        )}
 
         {/* Viewport Content with URL Persistence */}
         <main className="flex-1 p-4 sm:p-6 max-w-7xl w-full mx-auto">

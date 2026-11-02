@@ -278,6 +278,7 @@ async function initServer() {
         middlewareMode: true,
         hmr: false,
         watch: null,
+        allowedHosts: true,
       },
       appType: 'spa',
     });
