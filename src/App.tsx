@@ -165,60 +165,34 @@ const AppContent: React.FC<AppContentProps> = ({ onSignOut }) => {
 
 export default function App() {
   // STRICT AUTHENTICATION GATE:
-  // Must go with verified Supabase account. No guest bypass. No moving forward without real authentication.
-  const [authUser, setAuthUser] = useState<AuthUser | null>(() => {
-    try {
-      const saved = localStorage.getItem('pom_auth_session');
-      const parsed = saved ? JSON.parse(saved) : null;
-      return parsed && parsed.id ? parsed : null;
-    } catch {
-      return null;
-    }
-  });
+  // Must go with verified Supabase account. No guest bypass. Supabase Auth is the single source of truth.
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+  const [isAuthLoading, setIsAuthLoading] = useState(true);
 
   useEffect(() => {
+    // Purge legacy session key if present from old versions
+    try {
+      localStorage.removeItem('pom_auth_session');
+    } catch {}
+
     // Check real Supabase session status
     supabase.auth.getSession().then(({ data: { session }, error }) => {
-      try {
-        const saved = localStorage.getItem('pom_auth_session');
-        const parsed = saved ? JSON.parse(saved) : null;
-        if (parsed && parsed.id && parsed.id.startsWith('00000000')) {
-          return; // Retain active sandbox demo session
-        }
-      } catch {
-        // ignore parse error
-      }
-
       if (error || !session?.user || !session.user.email_confirmed_at) {
-        if (!session?.user) {
-          localStorage.removeItem('pom_auth_session');
-          setAuthUser(null);
-        }
+        setAuthUser(null);
       } else {
         const verifiedUser: AuthUser = {
           id: session.user.id,
           email: session.user.email || '',
           name: session.user.user_metadata?.full_name || session.user.email?.split('@')[0] || 'Vault Owner',
         };
-        localStorage.setItem('pom_auth_session', JSON.stringify(verifiedUser));
         setAuthUser(verifiedUser);
       }
+      setIsAuthLoading(false);
     });
 
     // Real-time auth subscription
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      try {
-        const saved = localStorage.getItem('pom_auth_session');
-        const parsed = saved ? JSON.parse(saved) : null;
-        if (parsed && parsed.id && parsed.id.startsWith('00000000')) {
-          return;
-        }
-      } catch {
-        // ignore parse error
-      }
-
       if (event === 'SIGNED_OUT') {
-        localStorage.removeItem('pom_auth_session');
         setAuthUser(null);
       } else if (session?.user && session.user.email_confirmed_at) {
         const verifiedUser: AuthUser = {
@@ -226,7 +200,6 @@ export default function App() {
           email: session.user.email || '',
           name: session.user.user_metadata?.full_name || session.user.email?.split('@')[0] || 'Vault Owner',
         };
-        localStorage.setItem('pom_auth_session', JSON.stringify(verifiedUser));
         setAuthUser(verifiedUser);
       }
     });
@@ -242,14 +215,23 @@ export default function App() {
     } catch (err) {
       console.warn('Sign out notice:', err);
     }
-    localStorage.removeItem('pom_auth_session');
     setAuthUser(null);
   };
 
   const handleAuthenticated = (user: AuthUser) => {
-    localStorage.setItem('pom_auth_session', JSON.stringify(user));
     setAuthUser(user);
   };
+
+  if (isAuthLoading) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-8 h-8 border-2 border-emerald-500 border-t-transparent rounded-full animate-spin" />
+          <p className="text-xs font-mono text-slate-400">Verifying secure vault session...</p>
+        </div>
+      </div>
+    );
+  }
 
   if (!authUser) {
     return <AuthGate onAuthenticated={handleAuthenticated} />;

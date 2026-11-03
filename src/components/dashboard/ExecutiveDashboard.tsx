@@ -58,19 +58,10 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({
   const { currentWorkspace, formatMoney, updateWorkspaceSettings } = useWorkspace();
   const workspaceId = currentWorkspace?.id || '';
 
-  // 1. Load customizable widgets from workspace settings with localStorage fallback
+  // 1. Load customizable widgets from authoritative workspace settings
   const [widgets, setWidgets] = useState<DashboardWidgetConfig[]>(() => {
-    try {
-      if (currentWorkspace?.settings?.dashboardWidgets && currentWorkspace.settings.dashboardWidgets.length > 0) {
-        return currentWorkspace.settings.dashboardWidgets;
-      }
-      const saved = localStorage.getItem(`pom_dashboard_widgets_${workspaceId}`);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      }
-    } catch {
-      // fallback
+    if (currentWorkspace?.settings?.dashboardWidgets && currentWorkspace.settings.dashboardWidgets.length > 0) {
+      return currentWorkspace.settings.dashboardWidgets;
     }
     return DEFAULT_WIDGETS;
   });
@@ -79,32 +70,15 @@ export const ExecutiveDashboard: React.FC<ExecutiveDashboardProps> = ({
     if (currentWorkspace?.settings?.dashboardWidgets && currentWorkspace.settings.dashboardWidgets.length > 0) {
       setWidgets(currentWorkspace.settings.dashboardWidgets);
     } else {
-      try {
-        const saved = localStorage.getItem(`pom_dashboard_widgets_${workspaceId}`);
-        if (saved) {
-          const parsed = JSON.parse(saved);
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            setWidgets(parsed);
-            return;
-          }
-        }
-      } catch {
-        // fallback
-      }
       setWidgets(DEFAULT_WIDGETS);
     }
-  }, [workspaceId, currentWorkspace?.settings?.dashboardWidgets]);
+  }, [currentWorkspace?.settings?.dashboardWidgets]);
 
   const [isCustomizeModalOpen, setIsCustomizeModalOpen] = useState(false);
 
-  // Save updated widget configuration to local state, localStorage, and Supabase via WorkspaceContext
+  // Save updated widget configuration to state and Supabase via WorkspaceContext
   const saveWidgetsConfig = (updatedWidgets: DashboardWidgetConfig[]) => {
     setWidgets(updatedWidgets);
-    try {
-      localStorage.setItem(`pom_dashboard_widgets_${workspaceId}`, JSON.stringify(updatedWidgets));
-    } catch (e) {
-      console.warn('Failed to save widgets locally:', e);
-    }
     updateWorkspaceSettings({
       dashboardWidgets: updatedWidgets,
     });

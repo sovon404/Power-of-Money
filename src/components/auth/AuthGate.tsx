@@ -26,9 +26,9 @@ type AuthMode = 'signin' | 'signup' | 'verify_email' | 'forgot_password';
 
 export const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
   const [mode, setMode] = useState<AuthMode>('signin');
-  const [email, setEmail] = useState('sovon01818537597@gmail.com');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [fullName, setFullName] = useState('Sovon');
+  const [fullName, setFullName] = useState('');
   const [otpToken, setOtpToken] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
@@ -310,16 +310,6 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
     } finally {
       setIsLoading(false);
     }
-  };
-
-  // Instant Sandbox Demo Access
-  const handleDemoAccess = () => {
-    const demoUser: AuthUser = {
-      id: '00000000-0000-4000-a000-000000000001',
-      email: 'demo@powerofmoney.app',
-      name: 'Sovon (Demo Vault)',
-    };
-    onAuthenticated(demoUser);
   };
 
   return (
@@ -633,18 +623,6 @@ export const AuthGate: React.FC<AuthGateProps> = ({ onAuthenticated }) => {
             )}
           </form>
         )}
-
-        {/* Sandbox Demo Option for Immediate Exploration */}
-        <div className="mt-5 pt-4 border-t border-slate-800/80">
-          <button
-            type="button"
-            onClick={handleDemoAccess}
-            className="w-full py-2.5 px-4 rounded-xl bg-slate-800/60 hover:bg-slate-800 active:bg-slate-700 text-slate-200 hover:text-white font-medium text-xs flex items-center justify-center gap-2 border border-slate-700/60 transition-all cursor-pointer"
-          >
-            <ShieldCheck className="w-4 h-4 text-emerald-400" />
-            <span>Explore Demo Vault (Instant Sandbox)</span>
-          </button>
-        </div>
       </div>
 
       {/* Security Footer Info */}
