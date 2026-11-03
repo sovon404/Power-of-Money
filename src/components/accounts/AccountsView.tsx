@@ -77,7 +77,7 @@ export const AccountsView: React.FC = () => {
     setEditColor(acc.color || '#0284c7');
   };
 
-  const handleSaveEditAccount = (e: React.FormEvent) => {
+  const handleSaveEditAccount = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingAccount || !editName.trim()) return;
     setFormError(null);
@@ -99,9 +99,13 @@ export const AccountsView: React.FC = () => {
       color: editColor,
     };
 
-    db.saveAccount(updated);
-    refreshData();
-    setEditingAccount(null);
+    try {
+      await db.saveAccount(updated);
+      refreshData();
+      setEditingAccount(null);
+    } catch (err: any) {
+      setFormError(err.message || 'Failed to update account in database.');
+    }
   };
 
   const confirmDeleteAccount = async () => {
@@ -109,7 +113,10 @@ export const AccountsView: React.FC = () => {
     setIsDeleting(true);
     setFormError(null);
     try {
-      await db.deleteAccount(accountToDelete.id, workspaceId);
+      const res = await db.deleteAccount(accountToDelete.id, workspaceId);
+      if (res.action === 'archived') {
+        setFormError(null);
+      }
       refreshData();
       setAccountToDelete(null);
     } catch (err: any) {
@@ -119,7 +126,7 @@ export const AccountsView: React.FC = () => {
     }
   };
 
-  const handleCreateAccount = (e: React.FormEvent) => {
+  const handleCreateAccount = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!accountName.trim()) return;
     setFormError(null);
@@ -152,37 +159,41 @@ export const AccountsView: React.FC = () => {
       created_at: new Date().toISOString(),
     };
 
-    db.saveAccount(newAcc);
+    try {
+      await db.saveAccount(newAcc);
 
-    // If opening balance > 0, post opening balance double-entry transaction against Opening Equity
-    if (opBal > 0) {
-      db.postJournalEntry(workspaceId, {
-        memo: `Opening Balance for ${newAcc.name}`,
-        source_type: 'opening_balance',
-        entry_date: openingDate,
-        lines: [
-          {
-            account_id: newAccId,
-            line_type: 'debit',
-            amount: opBal,
-            memo: 'Opening Asset Balance',
-          },
-          {
-            account_id: newAccId,
-            line_type: 'credit',
-            amount: opBal,
-            memo: 'Opening Equity Offset',
-          },
-        ],
-      });
+      // If opening balance > 0, post opening balance double-entry transaction against Opening Equity
+      if (opBal > 0) {
+        await db.postJournalEntry(workspaceId, {
+          memo: `Opening Balance for ${newAcc.name}`,
+          source_type: 'opening_balance',
+          entry_date: openingDate,
+          lines: [
+            {
+              account_id: newAccId,
+              line_type: 'debit',
+              amount: opBal,
+              memo: 'Opening Asset Balance',
+            },
+            {
+              account_id: newAccId,
+              line_type: 'credit',
+              amount: opBal,
+              memo: 'Opening Equity Offset',
+            },
+          ],
+        });
+      }
+
+      refreshData();
+      setShowAddModal(false);
+      resetForm();
+    } catch (err: any) {
+      setFormError(err.message || 'Failed to create account in database.');
     }
-
-    refreshData();
-    setShowAddModal(false);
-    resetForm();
   };
 
-  const handleTransfer = (e: React.FormEvent) => {
+  const handleTransfer = async (e: React.FormEvent) => {
     e.preventDefault();
     setTransferError(null);
 
@@ -202,7 +213,7 @@ export const AccountsView: React.FC = () => {
       return;
     }
 
-    const res = db.postTransfer(
+    const res = await db.postTransfer(
       workspaceId,
       sourceAccId,
       destAccId,

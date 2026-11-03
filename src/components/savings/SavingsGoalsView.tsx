@@ -75,7 +75,7 @@ export const SavingsGoalsView: React.FC = () => {
     setEditTargetDate(goal.target_date || '');
   };
 
-  const handleSaveEditGoal = (e: React.FormEvent) => {
+  const handleSaveEditGoal = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingGoal || !editName.trim()) return;
 
@@ -88,15 +88,23 @@ export const SavingsGoalsView: React.FC = () => {
       target_date: editTargetDate || undefined,
     };
 
-    db.saveSavingsGoal(updated);
-    refreshData();
-    setEditingGoal(null);
+    try {
+      await db.saveSavingsGoal(updated);
+      refreshData();
+      setEditingGoal(null);
+    } catch (err: any) {
+      console.error('Failed to update savings goal:', err);
+    }
   };
 
-  const handleDeleteGoal = (goal: SavingsGoal) => {
+  const handleDeleteGoal = async (goal: SavingsGoal) => {
     if (confirm(`Are you sure you want to delete the goal "${goal.name}"?`)) {
-      db.deleteSavingsGoal(goal.id, workspaceId);
-      refreshData();
+      try {
+        await db.deleteSavingsGoal(goal.id, workspaceId);
+        refreshData();
+      } catch (err: any) {
+        console.error('Failed to delete savings goal:', err);
+      }
     }
   };
 
@@ -233,7 +241,7 @@ export const SavingsGoalsView: React.FC = () => {
   const [fundingAccount, setFundingAccount] = useState('');
   const [contributeSuccess, setContributeSuccess] = useState<string | null>(null);
 
-  const handleCreateGoal = (e: React.FormEvent) => {
+  const handleCreateGoal = async (e: React.FormEvent) => {
     e.preventDefault();
     const tAmt = parseFloat(targetAmount);
     if (!name.trim() || isNaN(tAmt) || tAmt <= 0) return;
@@ -252,13 +260,17 @@ export const SavingsGoalsView: React.FC = () => {
       created_at: new Date().toISOString(),
     };
 
-    db.saveSavingsGoal(newGoal);
-    refreshData();
-    setShowAddModal(false);
-    resetForm();
+    try {
+      await db.saveSavingsGoal(newGoal);
+      refreshData();
+      setShowAddModal(false);
+      resetForm();
+    } catch (err: any) {
+      console.error('Failed to create goal:', err);
+    }
   };
 
-  const handleContribute = (e: React.FormEvent) => {
+  const handleContribute = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedGoal || !fundingAccount) return;
     const amt = parseFloat(contributeAmount);
@@ -273,42 +285,46 @@ export const SavingsGoalsView: React.FC = () => {
       targetAccId = match?.id || fundingAccount;
     }
 
-    // Double-entry rule for DPS / Savings contribution:
-    // Debit: Target Savings Head Account
-    // Credit: Funding Bank / Cash Account
-    db.postJournalEntry(workspaceId, {
-      memo: `DPS / Savings Contribution: ${selectedGoal.name}`,
-      source_type: 'transfer',
-      source_id: selectedGoal.id,
-      entry_date: new Date().toISOString().split('T')[0],
-      lines: [
-        {
-          account_id: targetAccId,
-          line_type: 'debit',
-          amount: amt,
-          memo: `Savings asset allocation: ${selectedGoal.name}`,
-        },
-        {
-          account_id: fundingAccount,
-          line_type: 'credit',
-          amount: amt,
-          memo: `Funding transfer for ${selectedGoal.name}`,
-        },
-      ],
-    });
+    try {
+      // Double-entry rule for DPS / Savings contribution:
+      // Debit: Target Savings Head Account
+      // Credit: Funding Bank / Cash Account
+      await db.postJournalEntry(workspaceId, {
+        memo: `DPS / Savings Contribution: ${selectedGoal.name}`,
+        source_type: 'transfer',
+        source_id: selectedGoal.id,
+        entry_date: new Date().toISOString().split('T')[0],
+        lines: [
+          {
+            account_id: targetAccId,
+            line_type: 'debit',
+            amount: amt,
+            memo: `Savings asset allocation: ${selectedGoal.name}`,
+          },
+          {
+            account_id: fundingAccount,
+            line_type: 'credit',
+            amount: amt,
+            memo: `Funding transfer for ${selectedGoal.name}`,
+          },
+        ],
+      });
 
-    selectedGoal.current_saved_amount += amt;
-    if (selectedGoal.current_saved_amount >= selectedGoal.target_amount) {
-      selectedGoal.status = 'completed';
+      selectedGoal.current_saved_amount += amt;
+      if (selectedGoal.current_saved_amount >= selectedGoal.target_amount) {
+        selectedGoal.status = 'completed';
+      }
+      await db.saveSavingsGoal(selectedGoal);
+
+      setContributeSuccess(`Contribution of ${formatMoney(amt)} saved! Account updated as an asset transfer without distorting expenses.`);
+      refreshData();
+      setTimeout(() => {
+        setContributeSuccess(null);
+        setShowContributeModal(false);
+      }, 2000);
+    } catch (err: any) {
+      console.error('Failed to record contribution:', err);
     }
-    db.saveSavingsGoal(selectedGoal);
-
-    setContributeSuccess(`Contribution of ${formatMoney(amt)} saved! Account updated as an asset transfer without distorting expenses.`);
-    refreshData();
-    setTimeout(() => {
-      setContributeSuccess(null);
-      setShowContributeModal(false);
-    }, 2000);
   };
 
   const resetForm = () => {

@@ -151,12 +151,16 @@ export const RecurringBillsView: React.FC = () => {
     setTimeout(() => setExecutionMessage(null), 3500);
   };
 
-  const handleDeleteRule = (rule: RecurringRule) => {
+  const handleDeleteRule = async (rule: RecurringRule) => {
     if (window.confirm(`Are you sure you want to delete recurring schedule "${rule.name}"? Past posted transactions will remain in your ledger.`)) {
-      db.deleteRecurringRule(rule.id, workspaceId);
-      refreshData();
-      setExecutionMessage(`Recurring rule "${rule.name}" deleted.`);
-      setTimeout(() => setExecutionMessage(null), 3000);
+      try {
+        await db.deleteRecurringRule(rule.id, workspaceId);
+        refreshData();
+        setExecutionMessage(`Recurring rule "${rule.name}" deleted.`);
+        setTimeout(() => setExecutionMessage(null), 3000);
+      } catch (err: any) {
+        setErrorMessage(err.message || 'Failed to delete recurring rule');
+      }
     }
   };
 
@@ -188,7 +192,7 @@ export const RecurringBillsView: React.FC = () => {
     return d.toISOString().split('T')[0];
   };
 
-  const handleExecuteNow = (rule: RecurringRule) => {
+  const handleExecuteNow = async (rule: RecurringRule) => {
     const today = new Date().toISOString().split('T')[0];
     const occurrenceId = `${rule.id}_${today}`;
     const defaultAcc = accounts[0]?.id || toUuid(`acc_cash_hand_${workspaceId}`);
@@ -198,7 +202,7 @@ export const RecurringBillsView: React.FC = () => {
     if (rule.rule_type === 'income') {
       const destAcc = rule.source_account_id || accounts.find(a => a.account_type_id === 'bank')?.id || defaultAcc;
       const defaultIncomeAcc = toUuid(`acc_income_earned_${workspaceId}`);
-      postResult = db.postJournalEntry(workspaceId, {
+      postResult = await db.postJournalEntry(workspaceId, {
         memo: `Recurring Inflow: ${rule.name}`,
         source_type: 'recurring_execution',
         source_id: occurrenceId,
@@ -221,7 +225,7 @@ export const RecurringBillsView: React.FC = () => {
         ],
       });
     } else if (rule.rule_type === 'transfer') {
-      postResult = db.postTransfer(
+      postResult = await db.postTransfer(
         workspaceId,
         rule.source_account_id || defaultAcc,
         rule.destination_account_id || accounts[1]?.id || defaultAcc,
@@ -232,7 +236,7 @@ export const RecurringBillsView: React.FC = () => {
     } else {
       // Expense or DPS installment
       const defaultOpAcc = toUuid(`acc_expense_operating_${workspaceId}`);
-      postResult = db.postJournalEntry(workspaceId, {
+      postResult = await db.postJournalEntry(workspaceId, {
         memo: `Recurring Bill: ${rule.name}`,
         source_type: 'recurring_execution',
         source_id: occurrenceId,
@@ -258,7 +262,7 @@ export const RecurringBillsView: React.FC = () => {
     if (postResult.success) {
       // Advance next due date automatically
       const nextDate = calculateNextDate(rule.next_due_date, rule.frequency);
-      db.saveRecurringRule({
+      await db.saveRecurringRule({
         ...rule,
         next_due_date: nextDate,
       });

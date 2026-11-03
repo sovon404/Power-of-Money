@@ -132,17 +132,25 @@ export const CreditCardsView: React.FC = () => {
     setEditingCard(null);
   };
 
-  const handleDeleteCard = (card: CreditCard) => {
+  const handleDeleteCard = async (card: CreditCard) => {
     if (window.confirm(`Are you sure you want to delete ${card.card_name} (•••• ${card.last_four_digits})? This will remove the card and its linked liability account from the database.`)) {
-      db.deleteCreditCard(card.id, workspaceId);
-      refreshData();
+      try {
+        await db.deleteCreditCard(card.id, workspaceId);
+        refreshData();
+      } catch (err: any) {
+        console.error('Failed to delete card:', err);
+      }
     }
   };
 
-  const handleDeleteLedgerItem = (journalEntryId: string) => {
+  const handleDeleteLedgerItem = async (journalEntryId: string) => {
     if (window.confirm('Are you sure you want to delete this credit card transaction from the database? Account and card balances will be restored.')) {
-      db.deleteJournalEntry(workspaceId, journalEntryId);
-      refreshData();
+      try {
+        await db.deleteJournalEntry(workspaceId, journalEntryId);
+        refreshData();
+      } catch (err: any) {
+        console.error('Failed to delete transaction:', err);
+      }
     }
   };
 
@@ -199,7 +207,7 @@ export const CreditCardsView: React.FC = () => {
     resetForm();
   };
 
-  const handlePayCard = (e: React.FormEvent) => {
+  const handlePayCard = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedCardForPayment || !payFromAccId || !payAmount) return;
 
@@ -210,7 +218,7 @@ export const CreditCardsView: React.FC = () => {
     // Debit: Credit Card Liability Account (Liability decreases)
     // Credit: Bank / Cash Asset Account (Liquid cash decreases)
     // ZERO operating expense recognized!
-    const res = db.postJournalEntry(workspaceId, {
+    const res = await db.postJournalEntry(workspaceId, {
       memo: `Card Payment: ${selectedCardForPayment.card_name} (•••• ${selectedCardForPayment.last_four_digits})`,
       source_type: 'credit_card_payment',
       source_id: selectedCardForPayment.id,
@@ -241,7 +249,7 @@ export const CreditCardsView: React.FC = () => {
     }
   };
 
-  const handleChargeCard = (e: React.FormEvent) => {
+  const handleChargeCard = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedCardForCharge || !chargeAmount || !chargeCategoryId) return;
 
@@ -254,7 +262,7 @@ export const CreditCardsView: React.FC = () => {
     // Strict Double-entry rule for credit card charge/expense:
     // Debit: Operating Expense Category (e.g. Personal Food, Mess Bill, Tech)
     // Credit: Credit Card Liability Account (Card liability increases)
-    const res = db.postJournalEntry(workspaceId, {
+    const res = await db.postJournalEntry(workspaceId, {
       memo: chargeMemo || `Card Swipe: ${chargeMerchant || 'Purchase'} (${catName})`,
       source_type: 'credit_card_charge',
       source_id: selectedCardForCharge.id,
@@ -282,7 +290,7 @@ export const CreditCardsView: React.FC = () => {
       const liabAcc = accounts.find(a => a.id === selectedCardForCharge.account_id);
       if (liabAcc) {
         liabAcc.current_balance_cached += amt;
-        db.saveAccount(liabAcc);
+        await db.saveAccount(liabAcc);
       }
       refreshData();
       setShowChargeModal(false);

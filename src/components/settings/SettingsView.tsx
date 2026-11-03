@@ -172,11 +172,7 @@ export const SettingsView: React.FC = () => {
         };
       }
 
-      const syncRes = await db.saveCategory(catToSave);
-      if (!syncRes.success && syncRes.error) {
-        console.warn('Category sync warning:', syncRes.error);
-      }
-
+      await db.saveCategory(catToSave);
       refreshData();
       setShowAddCatModal(false);
       setCatName('');
@@ -197,13 +193,28 @@ export const SettingsView: React.FC = () => {
     refreshData();
   };
 
+  const [categoryFeedback, setCategoryFeedback] = useState<{ message: string; type: 'success' | 'error' | 'info' } | null>(null);
+
   const handleDeleteCategory = async (cat: Category) => {
-    if (window.confirm(`Are you sure you want to permanently delete category "${cat.name}"?`)) {
+    try {
       const res = await db.deleteCategory(cat.id, workspaceId);
-      if (!res.success && res.error) {
-        alert(`Notice: Deleted locally. Supabase error: ${res.error}. Please run migration 17 in the Supabase SQL editor.`);
+      if (res.success) {
+        setCategoryFeedback({
+          message: `Category "${cat.name}" was successfully removed from the database.`,
+          type: 'success',
+        });
+        refreshData();
+      } else {
+        setCategoryFeedback({
+          message: `Could not delete category: ${res.error || 'Database constraint violation'}. Ensure migration 18 has been executed in Supabase SQL editor.`,
+          type: 'error',
+        });
       }
-      refreshData();
+    } catch (err: any) {
+      setCategoryFeedback({
+        message: err.message || 'Failed to delete category.',
+        type: 'error',
+      });
     }
   };
 
@@ -243,7 +254,8 @@ export const SettingsView: React.FC = () => {
 14. 20261102000014_single_user_demolish_workspaces.sql
 15. 20261102000015_categories_subcategories_and_saving_heads.sql
 16. 20261102000016_fix_category_conflicts_and_cascade_deletes.sql
-17. 20261102000017_master_categories_and_saving_heads_fix.sql`;
+17. 20261102000017_master_categories_and_saving_heads_fix.sql
+18. 20261102000018_realtime_and_delete_integrity.sql`;
     navigator.clipboard.writeText(text);
     setCopiedMigration(true);
     setTimeout(() => setCopiedMigration(false), 2000);
@@ -444,6 +456,22 @@ EXCEPTION WHEN OTHERS THEN NULL; END $$;`;
               )}
             </div>
           </div>
+
+          {categoryFeedback && (
+            <div className={`p-3 rounded-xl text-xs flex items-center justify-between ${
+              categoryFeedback.type === 'success' 
+                ? 'bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
+                : 'bg-rose-50 dark:bg-rose-950/50 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800'
+            }`}>
+              <span>{categoryFeedback.message}</span>
+              <button 
+                onClick={() => setCategoryFeedback(null)}
+                className="ml-2 font-bold opacity-60 hover:opacity-100"
+              >
+                &times;
+              </button>
+            </div>
+          )}
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
             {filteredCategories.filter(c => !c.parent_id).map(cat => {

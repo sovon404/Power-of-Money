@@ -99,7 +99,7 @@ export const AiAssistantView: React.FC = () => {
     }
   };
 
-  const handleConfirmAndPost = (e: React.FormEvent) => {
+  const handleConfirmAndPost = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!scanResult || !selectedFundingAccountId) return;
 
@@ -107,7 +107,7 @@ export const AiAssistantView: React.FC = () => {
     const matchedCat = categories.find(c => c.name.toLowerCase() === scanResult.categorySuggestion.toLowerCase()) || categories[0];
 
     // Explicit User Confirmation Step:
-    const res = db.postJournalEntry(workspaceId, {
+    const res = await db.postJournalEntry(workspaceId, {
       memo: `${scanResult.merchant}: ${scanResult.summary || 'Receipt Purchase'}`,
       source_type: 'ai_receipt_scan',
       entry_date: scanResult.date || new Date().toISOString().split('T')[0],

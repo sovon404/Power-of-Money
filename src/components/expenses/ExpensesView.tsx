@@ -224,6 +224,7 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
 
   const [entryToEdit, setEntryToEdit] = useState<JournalEntry | null>(null);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [deleteFeedback, setDeleteFeedback] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
   const handleEditEntry = (row: ExpenseRow) => {
     const fullEntry = journalEntries.find(e => e.id === row.entryId);
@@ -233,15 +234,46 @@ export const ExpensesView: React.FC<ExpensesViewProps> = ({
     }
   };
 
-  const handleDeleteEntry = (row: ExpenseRow) => {
-    if (confirm(`Are you sure you want to delete this expense of ${formatMoney(row.amount)} (${row.memo})? This will balance and restore your account.`)) {
-      db.deleteJournalEntry(workspaceId, row.entryId);
-      refreshData();
+  const handleDeleteEntry = async (row: ExpenseRow) => {
+    try {
+      const res = await db.deleteJournalEntry(workspaceId, row.entryId);
+      if (res.success) {
+        setDeleteFeedback({
+          message: `Expense of ${formatMoney(row.amount)} was deleted. Account balances restored.`,
+          type: 'success',
+        });
+        refreshData();
+      } else {
+        setDeleteFeedback({
+          message: `Could not delete expense: ${res.error || 'Database error'}.`,
+          type: 'error',
+        });
+      }
+    } catch (err: any) {
+      setDeleteFeedback({
+        message: err.message || 'Failed to delete expense entry.',
+        type: 'error',
+      });
     }
   };
 
   return (
     <div className="space-y-6">
+      {deleteFeedback && (
+        <div className={`p-3 rounded-xl text-xs flex items-center justify-between ${
+          deleteFeedback.type === 'success' 
+            ? 'bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
+            : 'bg-rose-50 dark:bg-rose-950/50 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800'
+        }`}>
+          <span>{deleteFeedback.message}</span>
+          <button 
+            onClick={() => setDeleteFeedback(null)}
+            className="ml-2 font-bold opacity-60 hover:opacity-100"
+          >
+            &times;
+          </button>
+        </div>
+      )}
       {/* Top Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>

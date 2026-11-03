@@ -199,8 +199,7 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
       is_archived: false,
       sort_order: categories.length + 1,
     };
-    db.saveCategory(newCat);
-    refreshData();
+    db.saveCategory(newCat).then(() => refreshData());
     setCategoryId(newCatId);
     return newCatId;
   };
@@ -208,8 +207,7 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
   const handleEditCategory = (catId: string, updatedName: string) => {
     const cat = categories.find(c => c.id === catId);
     if (cat) {
-      db.saveCategory({ ...cat, name: updatedName });
-      refreshData();
+      db.saveCategory({ ...cat, name: updatedName }).then(() => refreshData());
     }
   };
 
@@ -231,16 +229,14 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
       color: '#0284c7',
       created_at: new Date().toISOString(),
     };
-    db.saveAccount(newAcc);
-    refreshData();
+    db.saveAccount(newAcc).then(() => refreshData());
     return newAccId;
   };
 
   const handleEditAccount = (accId: string, updatedName: string) => {
     const acc = accounts.find(a => a.id === accId);
     if (acc) {
-      db.saveAccount({ ...acc, name: updatedName });
-      refreshData();
+      db.saveAccount({ ...acc, name: updatedName }).then(() => refreshData());
     }
   };
 
@@ -262,8 +258,7 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
       color: '#0d9488',
       created_at: new Date().toISOString(),
     };
-    db.saveAccount(newAcc);
-    refreshData();
+    db.saveAccount(newAcc).then(() => refreshData());
     setTargetSavingsAccountId(newAccId);
     return newAccId;
   };
@@ -271,15 +266,14 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
   const handleEditSavingsHead = (accId: string, updatedName: string) => {
     const acc = accounts.find(a => a.id === accId);
     if (acc) {
-      db.saveAccount({ ...acc, name: updatedName });
-      refreshData();
+      db.saveAccount({ ...acc, name: updatedName }).then(() => refreshData());
     }
   };
 
-  const handleDeleteEntry = () => {
+  const handleDeleteEntry = async () => {
     if (!entryToEdit) return;
-    if (window.confirm('Are you sure you want to delete this transaction from the database? Linked account balances will be restored.')) {
-      const res = db.deleteJournalEntry(workspaceId, entryToEdit.id);
+    try {
+      const res = await db.deleteJournalEntry(workspaceId, entryToEdit.id);
       if (res.success) {
         refreshData();
         onSuccess?.();
@@ -287,10 +281,12 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
       } else {
         setErrorMsg(res.error || 'Failed to delete transaction.');
       }
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Failed to delete transaction.');
     }
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
 
@@ -349,7 +345,7 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
       ];
 
       if (entryToEdit) {
-        const res = db.updateJournalEntry(workspaceId, entryToEdit.id, {
+        const res = await db.updateJournalEntry(workspaceId, entryToEdit.id, {
           memo: memoText,
           entry_date: date,
           period_end_date: effectivePeriodEnd,
@@ -362,7 +358,7 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
           return;
         }
       } else {
-        const res = db.postJournalEntry(workspaceId, {
+        const res = await db.postJournalEntry(workspaceId, {
           memo: memoText,
           source_type: 'manual',
           source_id: targetSavingsAccountId,
@@ -391,7 +387,7 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
         if (matchedGoal.current_saved_amount >= matchedGoal.target_amount) {
           matchedGoal.status = 'completed';
         }
-        db.saveSavingsGoal(matchedGoal);
+        await db.saveSavingsGoal(matchedGoal);
       }
     } else if (mode === 'expense') {
       if (!sourceAccountId) {
@@ -420,7 +416,7 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
       ];
 
       if (entryToEdit) {
-        const res = db.updateJournalEntry(workspaceId, entryToEdit.id, {
+        const res = await db.updateJournalEntry(workspaceId, entryToEdit.id, {
           memo: memoText,
           entry_date: date,
           period_end_date: effectivePeriodEnd,
@@ -433,7 +429,7 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
           return;
         }
       } else {
-        const res = db.postJournalEntry(workspaceId, {
+        const res = await db.postJournalEntry(workspaceId, {
           memo: memoText,
           source_type: 'manual',
           entry_date: date,
@@ -474,7 +470,7 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
       ];
 
       if (entryToEdit) {
-        const res = db.updateJournalEntry(workspaceId, entryToEdit.id, {
+        const res = await db.updateJournalEntry(workspaceId, entryToEdit.id, {
           memo: memoText,
           entry_date: date,
           period_end_date: effectivePeriodEnd,
@@ -487,7 +483,7 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
           return;
         }
       } else {
-        const res = db.postJournalEntry(workspaceId, {
+        const res = await db.postJournalEntry(workspaceId, {
           memo: memoText,
           source_type: 'manual',
           entry_date: date,
@@ -526,7 +522,7 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
             memo: `Transfer from source: ${memoText}`,
           },
         ];
-        const res = db.updateJournalEntry(workspaceId, entryToEdit.id, {
+        const res = await db.updateJournalEntry(workspaceId, entryToEdit.id, {
           memo: memoText,
           entry_date: date,
           period_end_date: effectivePeriodEnd,
@@ -539,7 +535,7 @@ export const NewTransactionModal: React.FC<NewTransactionModalProps> = ({
           return;
         }
       } else {
-        const res = db.postTransfer(
+        const res = await db.postTransfer(
           workspaceId,
           sourceAccountId,
           destinationAccountId,

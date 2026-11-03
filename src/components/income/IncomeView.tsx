@@ -366,15 +366,20 @@ export const IncomeView: React.FC = () => {
     });
   }, [incomeRecords, dateFilterRange, customFromDate, customToDate, filterIncomeType, filterCategory, searchQuery]);
 
+  const [actionFeedback, setActionFeedback] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+
   // Actions
-  const handleDeleteRecord = (entryId: string) => {
-    if (window.confirm('Are you sure you want to delete this income entry? Linked account balances will be restored.')) {
-      const res = db.deleteJournalEntry(workspaceId, entryId);
+  const handleDeleteRecord = async (entryId: string) => {
+    try {
+      const res = await db.deleteJournalEntry(workspaceId, entryId);
       if (res.success) {
+        setActionFeedback({ message: 'Income entry deleted. Account balances restored.', type: 'success' });
         refreshData();
       } else {
-        alert(res.error || 'Failed to delete income entry.');
+        setActionFeedback({ message: res.error || 'Failed to delete income entry from database.', type: 'error' });
       }
+    } catch (err: any) {
+      setActionFeedback({ message: err.message || 'Failed to delete income entry.', type: 'error' });
     }
   };
 
@@ -513,15 +518,13 @@ export const IncomeView: React.FC = () => {
 
   const handleDeleteTypeInList = (typeId: string) => {
     if (customTypes.length <= 1) {
-      alert('You must have at least one income type.');
+      setActionFeedback({ message: 'You must maintain at least one income type in the system.', type: 'error' });
       return;
     }
-    if (window.confirm('Delete this income type? Existing heads with this type will fall back to other.')) {
-      const updated = customTypes.filter(t => t.id !== typeId);
-      setCustomTypes(updated);
-      db.saveIncomeTypes(workspaceId, updated);
-      refreshData();
-    }
+    const updated = customTypes.filter(t => t.id !== typeId);
+    setCustomTypes(updated);
+    db.saveIncomeTypes(workspaceId, updated);
+    refreshData();
   };
 
   const renderTypeIcon = (iconName: string) => {
@@ -539,6 +542,21 @@ export const IncomeView: React.FC = () => {
 
   return (
     <div className="space-y-6">
+      {actionFeedback && (
+        <div className={`p-3 rounded-xl text-xs flex items-center justify-between ${
+          actionFeedback.type === 'success' 
+            ? 'bg-emerald-50 dark:bg-emerald-950/50 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800'
+            : 'bg-rose-50 dark:bg-rose-950/50 text-rose-700 dark:text-rose-300 border border-rose-200 dark:border-rose-800'
+        }`}>
+          <span>{actionFeedback.message}</span>
+          <button 
+            onClick={() => setActionFeedback(null)}
+            className="ml-2 font-bold opacity-60 hover:opacity-100"
+          >
+            &times;
+          </button>
+        </div>
+      )}
       {/* Top Header & Quick Action Buttons */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>

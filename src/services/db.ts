@@ -1,55 +1,50 @@
 import { 
   Workspace, 
-  WorkspaceMember, 
   FinancialAccount, 
   JournalEntry, 
   JournalLine, 
   Category, 
   CreditCard, 
-  CreditCardStatement, 
   Loan, 
   Property, 
-  PropertyValuation, 
-  PropertyRecovery, 
   Budget, 
   SavingsGoal, 
   RecurringRule, 
-  AuditLog 
+  AuditLog,
+  IncomeTypeItem 
 } from '../types';
-import { supabase, isSupabaseConfigured } from '../lib/supabase';
-import { supabaseSync } from './supabaseSync';
+import { supabaseSync, DeleteResult } from './supabaseSync';
 import { toUuid, generateUuid } from '../lib/uuid';
 
-const STORAGE_KEYS = {
-  CURRENT_USER: 'pom_current_user',
-  WORKSPACES: 'pom_workspaces',
-  MEMBERS: 'pom_workspace_members',
-  ACCOUNTS: 'pom_financial_accounts',
-  JOURNAL_ENTRIES: 'pom_journal_entries',
-  JOURNAL_LINES: 'pom_journal_lines',
-  CATEGORIES: 'pom_categories',
-  CREDIT_CARDS: 'pom_credit_cards',
-  CARD_STATEMENTS: 'pom_card_statements',
-  LOANS: 'pom_loans',
-  PROPERTIES: 'pom_properties',
-  PROPERTY_VALUATIONS: 'pom_property_valuations',
-  PROPERTY_RECOVERIES: 'pom_property_recoveries',
-  BUDGETS: 'pom_budgets',
-  SAVINGS_GOALS: 'pom_savings_goals',
-  RECURRING_RULES: 'pom_recurring_rules',
-  AUDIT_LOGS: 'pom_audit_logs',
-  DELETED_ACCOUNTS: 'pom_deleted_accounts',
-  DELETED_CATEGORIES: 'pom_deleted_categories',
-  DELETED_CARDS: 'pom_deleted_cards',
-  DELETED_LOANS: 'pom_deleted_loans',
-  DELETED_PROPERTIES: 'pom_deleted_properties',
-  DELETED_BUDGETS: 'pom_deleted_budgets',
-  DELETED_GOALS: 'pom_deleted_goals',
-  DELETED_RULES: 'pom_deleted_rules',
-  DELETED_ENTRIES: 'pom_deleted_entries',
-};
+// Legacy keys to purge completely to eliminate device-specific state & cache leaks
+const LEGACY_STORAGE_KEYS = [
+  'pom_financial_accounts',
+  'pom_journal_entries',
+  'pom_journal_lines',
+  'pom_categories',
+  'pom_credit_cards',
+  'pom_card_statements',
+  'pom_loans',
+  'pom_properties',
+  'pom_property_valuations',
+  'pom_property_recoveries',
+  'pom_budgets',
+  'pom_savings_goals',
+  'pom_recurring_rules',
+  'pom_audit_logs',
+  'pom_deleted_accounts',
+  'pom_deleted_categories',
+  'pom_deleted_cards',
+  'pom_deleted_loans',
+  'pom_deleted_properties',
+  'pom_deleted_budgets',
+  'pom_deleted_goals',
+  'pom_deleted_rules',
+  'pom_deleted_entries',
+  'pom_workspaces',
+  'pom_workspace_members'
+];
 
-// Seed Categories specified by user
 export const SEED_CATEGORIES_DATA: Array<{
   name: string;
   type: 'income' | 'expense' | 'saving' | 'transfer_allocation';
@@ -94,7 +89,6 @@ export const SEED_CATEGORIES_DATA: Array<{
   { name: 'Protein Target', type: 'expense', accounting_classification: 'expense_operating', icon: 'activity', color: '#10b981' },
   { name: 'Adjustment', type: 'expense', accounting_classification: 'expense_operating', icon: 'sliders', color: '#64748b' },
   { name: 'FITA', type: 'expense', accounting_classification: 'expense_operating', icon: 'award', color: '#f59e0b' },
-  // Core Income Categories with Types (Salary, Remote/Freelance, Land Mortgage, Business, Investment, Other)
   { name: 'Salary', type: 'income', income_type: 'salary', accounting_classification: 'income_operating', icon: 'briefcase', color: '#10b981' },
   { name: 'Allowances & Bonus', type: 'income', income_type: 'salary', accounting_classification: 'income_operating', icon: 'award', color: '#059669' },
   { name: 'Business / Freelance', type: 'income', income_type: 'remote_freelance', accounting_classification: 'income_operating', icon: 'laptop', color: '#0284c7' },
@@ -105,210 +99,79 @@ export const SEED_CATEGORIES_DATA: Array<{
   { name: 'Other Income', type: 'income', income_type: 'other', accounting_classification: 'income_operating', icon: 'plus-circle', color: '#14b8a6' },
 ];
 
-class DatabaseEngine {
-  private get<T>(key: string, defaultValue: T): T {
+export interface InMemoryStore {
+  workspaces: Workspace[];
+  accounts: FinancialAccount[];
+  categories: Category[];
+  entries: JournalEntry[];
+  lines: JournalLine[];
+  cards: CreditCard[];
+  loans: Loan[];
+  properties: Property[];
+  budgets: Budget[];
+  goals: SavingsGoal[];
+  rules: RecurringRule[];
+  auditLogs: AuditLog[];
+}
+
+class CentralizedDatabaseEngine {
+  // Pure In-Memory State: Never persisted to localStorage/sessionStorage/IndexedDB
+  private store: InMemoryStore = {
+    workspaces: [],
+    accounts: [],
+    categories: [],
+    entries: [],
+    lines: [],
+    cards: [],
+    loans: [],
+    properties: [],
+    budgets: [],
+    goals: [],
+    rules: [],
+    auditLogs: [],
+  };
+
+  private listeners: Set<() => void> = new Set();
+
+  constructor() {
+    this.purgeLegacyDeviceStorage();
+  }
+
+  // Purge any old localStorage financial data to prevent cross-device or stale cache leakage
+  private purgeLegacyDeviceStorage(): void {
+    if (typeof window === 'undefined') return;
     try {
-      const data = localStorage.getItem(key);
-      return data ? JSON.parse(data) : defaultValue;
-    } catch {
-      return defaultValue;
-    }
-  }
-
-  private set<T>(key: string, value: T): void {
-    try {
-      localStorage.setItem(key, JSON.stringify(value));
-    } catch (e) {
-      console.error('Storage set error:', e);
-    }
-  }
-
-  // Workspaces
-  getWorkspaces(userId?: string): Workspace[] {
-    const all = this.get<Workspace[]>(STORAGE_KEYS.WORKSPACES, []);
-    if (!userId) return all;
-    return all.filter(w => w.created_by === userId);
-  }
-
-  saveWorkspace(ws: Workspace): void {
-    const list = this.get<Workspace[]>(STORAGE_KEYS.WORKSPACES, []);
-    const idx = list.findIndex(w => w.id === ws.id);
-    if (idx >= 0) {
-      list[idx] = ws;
-    } else {
-      list.push(ws);
-    }
-    this.set(STORAGE_KEYS.WORKSPACES, list);
-    if (ws.created_by) {
-      supabaseSync.syncWorkspace(ws, ws.created_by);
-    }
-  }
-
-  isWorkspaceSeeded(workspaceId: string): boolean {
-    return Boolean(localStorage.getItem(`pom_seeded_workspace_${workspaceId}`));
-  }
-
-  seedInitialWorkspaceDefaults(workspaceId: string): void {
-    if (this.isWorkspaceSeeded(workspaceId)) return;
-    this.ensureDefaultAccountsForWorkspace(workspaceId);
-    this.ensureCategoriesForWorkspace(workspaceId);
-    localStorage.setItem(`pom_seeded_workspace_${workspaceId}`, 'true');
-  }
-
-  // Initialize workspace bound strictly to authenticated user's ID
-  initializeUserWorkspace(userId: string, userName?: string, userEmail?: string): { workspace: Workspace; isNew: boolean } {
-    const wsUuid = toUuid(`ws_${userId}`);
-    let workspaces = this.getWorkspaces(userId);
-    let activeWs: Workspace;
-    let isNew = false;
-
-    if (workspaces.length === 0) {
-      activeWs = {
-        id: wsUuid,
-        name: `${userName || 'My'}'s Vault`,
-        type: 'personal',
-        created_by: userId,
-        currency: 'BDT',
-        description: `Primary personal financial vault for ${userEmail || userName || userId}`,
-        created_at: new Date().toISOString(),
-      };
-      this.saveWorkspace(activeWs);
-      isNew = true;
-    } else {
-      activeWs = workspaces[0];
-    }
-
-    // Direct cloud sync to Supabase (profiles, workspaces)
-    supabaseSync.syncProfile(userId, userEmail || '', userName || '');
-    supabaseSync.syncWorkspace(activeWs, userId);
-
-    return { workspace: activeWs, isNew };
-  }
-
-  // Fallback for backward compatibility
-  initializeDefaultWorkspace(userId?: string, userName?: string): { workspace: Workspace; isNew: boolean } {
-    return this.initializeUserWorkspace(userId || 'user_owner', userName);
-  }
-
-  seedCategoriesForWorkspace(workspaceId: string): void {
-    this.ensureCategoriesForWorkspace(workspaceId);
-  }
-
-  // Ensures all 36 expense categories + income stream categories exist with deterministic UUIDs
-  ensureCategoriesForWorkspace(workspaceId: string): Category[] {
-    const allCats = this.get<Category[]>(STORAGE_KEYS.CATEGORIES, []);
-    const existing = allCats.filter(c => c.workspace_id === workspaceId);
-    const existingNames = new Set(existing.map(c => c.name.toLowerCase().trim()));
-    const deletedCats = new Set(this.get<string[]>(STORAGE_KEYS.DELETED_CATEGORIES, []).map(s => s.toLowerCase().trim()));
-    const missing: Category[] = [];
-
-    SEED_CATEGORIES_DATA.forEach((c, i) => {
-      const nameKey = c.name.toLowerCase().trim();
-      const catUuid = toUuid(`cat_${workspaceId}_${nameKey.replace(/[^a-z0-9]/g, '_')}`);
-      
-      // CRITICAL: NEVER resurrect a category that was deleted by the user
-      if (deletedCats.has(nameKey) || deletedCats.has(catUuid)) {
-        return;
-      }
-
-      if (!existingNames.has(nameKey)) {
-        const newCat: Category = {
-          id: catUuid,
-          workspace_id: workspaceId,
-          name: c.name,
-          type: c.type,
-          income_type: c.income_type,
-          accounting_classification: c.accounting_classification,
-          icon: c.icon,
-          color: c.color,
-          is_seed: true,
-          is_archived: false,
-          sort_order: i + 1,
-        };
-        missing.push(newCat);
-      }
-    });
-
-    let updated = false;
-    let resultCats = [...allCats];
-
-    if (missing.length > 0) {
-      resultCats = [...resultCats, ...missing];
-      updated = true;
-      missing.forEach(cat => supabaseSync.syncCategory(cat, workspaceId));
-    }
-
-    // Also enrich any existing income categories or upgrade saving categories
-    resultCats = resultCats.map(cat => {
-      if (cat.workspace_id === workspaceId && cat.type === 'income' && !cat.income_type) {
-        updated = true;
-        const seedMatch = SEED_CATEGORIES_DATA.find(s => s.name.toLowerCase() === cat.name.toLowerCase());
-        const inferredType = seedMatch?.income_type || (
-          cat.name.toLowerCase().includes('salary') || cat.name.toLowerCase().includes('bonus') || cat.name.toLowerCase().includes('allowance') ? 'salary' :
-          cat.name.toLowerCase().includes('freelance') || cat.name.toLowerCase().includes('remote') || cat.name.toLowerCase().includes('contract') ? 'remote_freelance' :
-          cat.name.toLowerCase().includes('mortgage') || cat.name.toLowerCase().includes('rent') || cat.name.toLowerCase().includes('land') || cat.name.toLowerCase().includes('lease') ? 'land_mortgage' :
-          cat.name.toLowerCase().includes('invest') || cat.name.toLowerCase().includes('return') || cat.name.toLowerCase().includes('dividend') ? 'investment' :
-          cat.name.toLowerCase().includes('business') || cat.name.toLowerCase().includes('trade') ? 'business' : 'other'
-        );
-        return { ...cat, income_type: inferredType };
-      }
-
-      if (cat.workspace_id === workspaceId) {
-        const seedMatch = SEED_CATEGORIES_DATA.find(s => s.name.toLowerCase() === cat.name.toLowerCase());
-        if (seedMatch && seedMatch.type === 'saving' && (cat.type !== 'saving' || !cat.target_savings_account_id)) {
-          updated = true;
-          const defaultTargetAcc = cat.name.toLowerCase().includes('unity') 
-            ? toUuid(`acc_unity_fund_${workspaceId}`) 
-            : toUuid(`acc_dps_baf_${workspaceId}`);
-          return {
-            ...cat,
-            type: 'saving',
-            accounting_classification: 'asset_savings' as any,
-            target_savings_account_id: cat.target_savings_account_id || defaultTargetAcc,
-          };
+      LEGACY_STORAGE_KEYS.forEach(k => {
+        try {
+          localStorage.removeItem(k);
+          sessionStorage.removeItem(k);
+        } catch {}
+      });
+      // Purge any income types stored locally
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && (key.startsWith('pom_income_types_') || key.startsWith('pom_seeded_workspace_'))) {
+          localStorage.removeItem(key);
         }
       }
-
-      return cat;
-    });
-
-    if (updated) {
-      this.set(STORAGE_KEYS.CATEGORIES, resultCats);
+    } catch (e) {
+      console.warn('Storage purge notice:', e);
     }
-
-    return resultCats.filter(c => c.workspace_id === workspaceId && !c.is_archived);
   }
 
-  // Income Types Management
-  getIncomeTypes(workspaceId: string): Array<{ id: string; name: string; description?: string; color: string; icon: string }> {
-    const key = `pom_income_types_${workspaceId}`;
-    const defaultTypes = [
-      { id: 'salary', name: 'Salary / Employment', description: 'Monthly wages, official pay, bonuses', color: '#10b981', icon: 'briefcase' },
-      { id: 'remote_freelance', name: 'Remote / Freelancing', description: 'Tech contracts, software freelancing, remittance', color: '#0284c7', icon: 'laptop' },
-      { id: 'land_mortgage', name: 'Land Mortgage & Rent', description: 'Land mortgage yields, plot lease, tenant rent', color: '#d97706', icon: 'building' },
-      { id: 'business', name: 'Business & Trade', description: 'Commercial enterprise, trading, products', color: '#8b5cf6', icon: 'globe' },
-      { id: 'investment', name: 'Investment Returns', description: 'DPS profits, dividends, capital gains', color: '#0d9488', icon: 'trending-up' },
-      { id: 'other', name: 'Other Inflows', description: 'Gifts, one-off receipts, allowances', color: '#64748b', icon: 'plus-circle' },
-    ];
-    try {
-      const saved = localStorage.getItem(key);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      }
-    } catch {
-      // fallback
-    }
-    return defaultTypes;
+  public subscribe(listener: () => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
   }
 
-  saveIncomeTypes(workspaceId: string, types: Array<{ id: string; name: string; description?: string; color: string; icon: string }>): void {
-    const key = `pom_income_types_${workspaceId}`;
-    localStorage.setItem(key, JSON.stringify(types));
+  private notify(): void {
+    this.listeners.forEach(fn => fn());
   }
 
-  // Hydrates local storage cache with pure live data from Supabase DB (no dummy data)
-  hydrateFromSupabase(data: {
+  // ==========================================
+  // Remote Hydration from Supabase (Source of Truth)
+  // ==========================================
+  public hydrateFromRemote(data: {
     accounts?: FinancialAccount[];
     categories?: Category[];
     cards?: CreditCard[];
@@ -319,364 +182,110 @@ class DatabaseEngine {
     goals?: SavingsGoal[];
     rules?: RecurringRule[];
   }, workspaceId: string): void {
-    const deletedAccs = new Set(this.get<string[]>(STORAGE_KEYS.DELETED_ACCOUNTS, []).map(s => s.toLowerCase().trim()));
-    const deletedCats = new Set(this.get<string[]>(STORAGE_KEYS.DELETED_CATEGORIES, []).map(s => s.toLowerCase().trim()));
-    const deletedCards = new Set(this.get<string[]>(STORAGE_KEYS.DELETED_CARDS, []).map(s => s.toLowerCase().trim()));
-    const deletedLoans = new Set(this.get<string[]>(STORAGE_KEYS.DELETED_LOANS, []).map(s => s.toLowerCase().trim()));
-    const deletedProps = new Set(this.get<string[]>(STORAGE_KEYS.DELETED_PROPERTIES, []).map(s => s.toLowerCase().trim()));
-    const deletedBudgets = new Set(this.get<string[]>(STORAGE_KEYS.DELETED_BUDGETS, []).map(s => s.toLowerCase().trim()));
-    const deletedGoals = new Set(this.get<string[]>(STORAGE_KEYS.DELETED_GOALS, []).map(s => s.toLowerCase().trim()));
-    const deletedRules = new Set(this.get<string[]>(STORAGE_KEYS.DELETED_RULES, []).map(s => s.toLowerCase().trim()));
-    const deletedEntries = new Set(this.get<string[]>(STORAGE_KEYS.DELETED_ENTRIES, []).map(s => s.toLowerCase().trim()));
-
     if (data.accounts !== undefined) {
-      const allAccs = this.get<FinancialAccount[]>(STORAGE_KEYS.ACCOUNTS, []);
-      const otherAccs = allAccs.filter(a => a.workspace_id !== workspaceId);
-      const localAccs = allAccs.filter(a => a.workspace_id === workspaceId);
-      const localMap = new Map(localAccs.map(a => [a.id, a]));
-      const localNameMap = new Map(localAccs.map(a => [a.name.toLowerCase().trim(), a]));
-      
-      const remoteFiltered = data.accounts.filter(remoteAcc => 
-        !deletedAccs.has(remoteAcc.id.toLowerCase()) && 
-        !deletedAccs.has(remoteAcc.name.toLowerCase().trim())
-      );
-
-      // 1. Deduplicate remote accounts by normalized name (prevent duplicates from Supabase)
-      const remoteDeduplicated: FinancialAccount[] = [];
-      const remoteSeenNames = new Map<string, FinancialAccount>();
-      const remoteDupIdsToPurge: string[] = [];
-
-      for (const rAcc of remoteFiltered) {
-        const normName = rAcc.name.toLowerCase().trim();
-        const existing = remoteSeenNames.get(normName);
-        if (!existing) {
-          remoteSeenNames.set(normName, rAcc);
-          remoteDeduplicated.push(rAcc);
-        } else {
-          // Keep the account with non-zero balance or latest data
-          if ((!existing.current_balance_cached || existing.current_balance_cached === 0) && (rAcc.current_balance_cached || rAcc.opening_balance)) {
-            existing.current_balance_cached = rAcc.current_balance_cached || rAcc.opening_balance;
-            existing.opening_balance = rAcc.opening_balance || existing.opening_balance;
-          }
-          this.remapAccountId(rAcc.id, existing.id, workspaceId);
-          remoteDupIdsToPurge.push(rAcc.id);
-        }
-      }
-
-      // Purge any remote duplicates from Supabase in background
-      if (remoteDupIdsToPurge.length > 0) {
-        Promise.all(remoteDupIdsToPurge.map(id => supabaseSync.deleteAccount(id, workspaceId))).catch(() => {});
-      }
-
-      // 2. Build merged accounts from deduplicated remote records
-      const mergedAccs: FinancialAccount[] = remoteDeduplicated.map(remoteAcc => {
-        const normName = remoteAcc.name.toLowerCase().trim();
-        const local = localMap.get(remoteAcc.id) || localNameMap.get(normName);
-        const resolvedBal = remoteAcc.current_balance_cached !== 0 
-          ? remoteAcc.current_balance_cached 
-          : (local?.current_balance_cached || remoteAcc.opening_balance || 0);
-
-        return {
-          ...remoteAcc,
-          current_balance_cached: resolvedBal,
-        };
-      });
-
-      const mergedAccIds = new Set(mergedAccs.map(a => a.id));
-      const mergedAccNames = new Set(mergedAccs.map(a => a.name.toLowerCase().trim()));
-
-      // 3. Preserve genuine local accounts created in UI that don't exist remotely (NEVER duplicate by name!)
-      for (const local of localAccs) {
-        const normName = local.name.toLowerCase().trim();
-        if (deletedAccs.has(local.id.toLowerCase()) || deletedAccs.has(normName)) {
-          continue;
-        }
-
-        // If remote already has this account under a different ID, remap local references and DO NOT duplicate
-        if (!mergedAccIds.has(local.id) && mergedAccNames.has(normName)) {
-          const matchingRemote = mergedAccs.find(m => m.name.toLowerCase().trim() === normName);
-          if (matchingRemote) {
-            this.remapAccountId(local.id, matchingRemote.id, workspaceId);
-            if ((!matchingRemote.current_balance_cached || matchingRemote.current_balance_cached === 0) && local.current_balance_cached) {
-              matchingRemote.current_balance_cached = local.current_balance_cached;
-              supabaseSync.syncAccount(matchingRemote, workspaceId);
-            }
-          }
-          continue;
-        }
-
-        // Only append if genuinely new
-        if (!mergedAccIds.has(local.id) && !mergedAccNames.has(normName)) {
-          mergedAccs.push(local);
-          mergedAccIds.add(local.id);
-          mergedAccNames.add(normName);
-          supabaseSync.syncAccount(local, workspaceId);
-        }
-      }
-
-      this.set(STORAGE_KEYS.ACCOUNTS, [...otherAccs, ...mergedAccs]);
+      const other = this.store.accounts.filter(a => a.workspace_id !== workspaceId);
+      this.store.accounts = [...other, ...data.accounts];
     }
 
-    if (data.categories !== undefined && data.categories.length > 0) {
-      const allCats = this.get<Category[]>(STORAGE_KEYS.CATEGORIES, []);
-      const otherCats = allCats.filter(c => c.workspace_id !== workspaceId);
-      const localCats = allCats.filter(c => c.workspace_id === workspaceId);
-      const localMap = new Map(localCats.map(c => [c.id, c]));
-      const localNameMap = new Map(localCats.map(c => [c.name.toLowerCase().trim(), c]));
-
-      const remoteFiltered = data.categories.filter(remoteCat => 
-        !deletedCats.has(remoteCat.id.toLowerCase()) && 
-        !deletedCats.has(remoteCat.name.toLowerCase().trim())
-      );
-
-      // 1. Deduplicate remote categories by normalized name and type
-      const remoteDeduplicated: Category[] = [];
-      const remoteSeenCats = new Map<string, Category>();
-      const remoteDupCatIdsToPurge: string[] = [];
-
-      for (const rCat of remoteFiltered) {
-        const key = `${rCat.name.toLowerCase().trim()}::${rCat.type}`;
-        const existing = remoteSeenCats.get(key);
-        if (!existing) {
-          remoteSeenCats.set(key, rCat);
-          remoteDeduplicated.push(rCat);
-        } else {
-          if (!existing.target_savings_account_id && rCat.target_savings_account_id) {
-            existing.target_savings_account_id = rCat.target_savings_account_id;
-          }
-          if (!existing.parent_id && rCat.parent_id) {
-            existing.parent_id = rCat.parent_id;
-          }
-          if (!existing.income_type && rCat.income_type) {
-            existing.income_type = rCat.income_type;
-          }
-          this.remapCategoryId(rCat.id, existing.id, workspaceId);
-          remoteDupCatIdsToPurge.push(rCat.id);
-        }
-      }
-
-      if (remoteDupCatIdsToPurge.length > 0) {
-        Promise.all(remoteDupCatIdsToPurge.map(id => supabaseSync.deleteCategory(id, workspaceId))).catch(() => {});
-      }
-
-      // 2. Build merged categories
-      const mergedCats: Category[] = [];
-      const mergedCatIds = new Set<string>();
-      const mergedCatKeys = new Set<string>();
-
-      for (const remoteCat of remoteDeduplicated) {
-        const normName = remoteCat.name.toLowerCase().trim();
-        const key = `${normName}::${remoteCat.type}`;
-        mergedCatIds.add(remoteCat.id);
-        mergedCatKeys.add(key);
-
-        const local = localMap.get(remoteCat.id) || localNameMap.get(normName);
-        const isSaving = 
-          remoteCat.type === 'saving' || 
-          remoteCat.accounting_classification === 'asset_savings' ||
-          local?.type === 'saving' ||
-          local?.accounting_classification === 'asset_savings' ||
-          ['dps', 'dsp (baf)', 'unity fund-2026'].includes(normName);
-
-        mergedCats.push({
-          ...remoteCat,
-          parent_id: remoteCat.parent_id !== undefined ? remoteCat.parent_id : local?.parent_id,
-          description: remoteCat.description || local?.description,
-          type: isSaving ? 'saving' : remoteCat.type,
-          accounting_classification: isSaving ? ('asset_savings' as any) : (remoteCat.accounting_classification || 'expense_operating'),
-          target_savings_account_id: remoteCat.target_savings_account_id || local?.target_savings_account_id,
-          income_type: remoteCat.income_type || local?.income_type || (remoteCat.type === 'income' ? 'other' : undefined),
-        });
-      }
-
-      // 3. Preserve genuine local categories created in UI that haven't been fetched yet
-      for (const local of localCats) {
-        const normName = local.name.toLowerCase().trim();
-        const key = `${normName}::${local.type}`;
-
-        if (deletedCats.has(local.id.toLowerCase()) || deletedCats.has(normName)) {
-          continue;
-        }
-
-        // If already exists remotely under a different ID, remap local references and do not duplicate
-        if (!mergedCatIds.has(local.id) && mergedCatKeys.has(key)) {
-          const matchingMerged = mergedCats.find(m => `${m.name.toLowerCase().trim()}::${m.type}` === key);
-          if (matchingMerged) {
-            this.remapCategoryId(local.id, matchingMerged.id, workspaceId);
-          }
-          continue;
-        }
-
-        if (!mergedCatIds.has(local.id) && !mergedCatKeys.has(key)) {
-          mergedCats.push(local);
-          mergedCatIds.add(local.id);
-          mergedCatKeys.add(key);
-          supabaseSync.syncCategory(local, workspaceId);
-        }
-      }
-
-      this.set(STORAGE_KEYS.CATEGORIES, [...otherCats, ...mergedCats]);
+    if (data.categories !== undefined) {
+      const other = this.store.categories.filter(c => c.workspace_id !== workspaceId);
+      this.store.categories = [...other, ...data.categories];
     }
+
     if (data.cards !== undefined) {
-      const otherCards = this.get<CreditCard[]>(STORAGE_KEYS.CREDIT_CARDS, []).filter(c => c.workspace_id !== workspaceId);
-      const filtered = data.cards.filter(c => !deletedCards.has(c.id.toLowerCase()));
-      this.set(STORAGE_KEYS.CREDIT_CARDS, [...otherCards, ...filtered]);
+      const other = this.store.cards.filter(c => c.workspace_id !== workspaceId);
+      this.store.cards = [...other, ...data.cards];
     }
+
     if (data.loans !== undefined) {
-      const otherLoans = this.get<Loan[]>(STORAGE_KEYS.LOANS, []).filter(l => l.workspace_id !== workspaceId);
-      const filtered = data.loans.filter(l => !deletedLoans.has(l.id.toLowerCase()));
-      this.set(STORAGE_KEYS.LOANS, [...otherLoans, ...filtered]);
+      const other = this.store.loans.filter(l => l.workspace_id !== workspaceId);
+      this.store.loans = [...other, ...data.loans];
     }
+
     if (data.properties !== undefined) {
-      const otherProps = this.get<Property[]>(STORAGE_KEYS.PROPERTIES, []).filter(p => p.workspace_id !== workspaceId);
-      const filtered = data.properties.filter(p => !deletedProps.has(p.id.toLowerCase()));
-      this.set(STORAGE_KEYS.PROPERTIES, [...otherProps, ...filtered]);
+      const other = this.store.properties.filter(p => p.workspace_id !== workspaceId);
+      this.store.properties = [...other, ...data.properties];
     }
+
     if (data.budgets !== undefined) {
-      const otherBudgets = this.get<Budget[]>(STORAGE_KEYS.BUDGETS, []).filter(b => b.workspace_id !== workspaceId);
-      const filtered = data.budgets.filter(b => !deletedBudgets.has(b.id.toLowerCase()) && !deletedCats.has(b.category_id?.toLowerCase() || ''));
-      this.set(STORAGE_KEYS.BUDGETS, [...otherBudgets, ...filtered]);
+      const other = this.store.budgets.filter(b => b.workspace_id !== workspaceId);
+      this.store.budgets = [...other, ...data.budgets];
     }
+
     if (data.goals !== undefined) {
-      const otherGoals = this.get<SavingsGoal[]>(STORAGE_KEYS.SAVINGS_GOALS, []).filter(g => g.workspace_id !== workspaceId);
-      const filtered = data.goals.filter(g => !deletedGoals.has(g.id.toLowerCase()));
-      this.set(STORAGE_KEYS.SAVINGS_GOALS, [...otherGoals, ...filtered]);
+      const other = this.store.goals.filter(g => g.workspace_id !== workspaceId);
+      this.store.goals = [...other, ...data.goals];
     }
+
     if (data.rules !== undefined) {
-      const otherRules = this.get<RecurringRule[]>(STORAGE_KEYS.RECURRING_RULES, []).filter(r => r.workspace_id !== workspaceId);
-      const filtered = data.rules.filter(r => !deletedRules.has(r.id.toLowerCase()));
-      this.set(STORAGE_KEYS.RECURRING_RULES, [...otherRules, ...filtered]);
+      const other = this.store.rules.filter(r => r.workspace_id !== workspaceId);
+      this.store.rules = [...other, ...data.rules];
     }
+
     if (data.entries !== undefined) {
-      const otherEntries = this.get<JournalEntry[]>(STORAGE_KEYS.JOURNAL_ENTRIES, []).filter(e => e.workspace_id !== workspaceId);
-      const otherLines = this.get<JournalLine[]>(STORAGE_KEYS.JOURNAL_LINES, []).filter(l => l.workspace_id !== workspaceId);
-      const filteredEntries = data.entries.filter(e => !deletedEntries.has(e.id.toLowerCase()));
-      const validEntryIds = new Set(filteredEntries.map(e => e.id));
+      const otherEntries = this.store.entries.filter(e => e.workspace_id !== workspaceId);
+      const otherLines = this.store.lines.filter(l => l.workspace_id !== workspaceId);
       const newLines: JournalLine[] = [];
-      filteredEntries.forEach(e => {
+
+      data.entries.forEach(e => {
         if ((e as any).lines && Array.isArray((e as any).lines)) {
-          newLines.push(...(e as any).lines.filter((l: any) => validEntryIds.has(l.journal_entry_id)));
+          newLines.push(...(e as any).lines);
         }
       });
-      this.set(STORAGE_KEYS.JOURNAL_ENTRIES, [...otherEntries, ...filteredEntries]);
-      if (newLines.length > 0) {
-        this.set(STORAGE_KEYS.JOURNAL_LINES, [...otherLines, ...newLines]);
-      }
-    }
-  }
 
-  // Safe cleanup - retains all user heads and real accounts
-  purgeLocalDemoData(_workspaceId: string): void {
-    // No-op to preserve persistent accounts and heads
-  }
-
-  // Ensures foundational accounts exist with deterministic RFC4122 v4 UUIDs
-  ensureDefaultAccountsForWorkspace(workspaceId: string): FinancialAccount[] {
-    const existing = this.getAccounts(workspaceId);
-    const existingUuids = new Set(existing.map(a => a.id));
-    const existingNames = new Set(existing.map(a => a.name.toLowerCase().trim()));
-    const deletedAccs = new Set(this.get<string[]>(STORAGE_KEYS.DELETED_ACCOUNTS, []).map(s => s.toLowerCase().trim()));
-
-    const defaults: Array<{
-      defaultId: string;
-      name: string;
-      type: string;
-      provider: string;
-      icon: string;
-      color: string;
-    }> = [
-      { defaultId: `acc_cash_hand_${workspaceId}`, name: 'Cash In Hand', type: 'cash', provider: 'Cash', icon: 'banknote', color: '#10b981' },
-      { defaultId: `acc_bank_online_${workspaceId}`, name: 'Cash In Bank / Online', type: 'bank', provider: 'Bank', icon: 'landmark', color: '#0284c7' },
-      { defaultId: `acc_bkash_wallet_${workspaceId}`, name: 'bKash Wallet', type: 'mfs', provider: 'bKash', icon: 'smartphone', color: '#e11d48' },
-      { defaultId: `acc_nagad_wallet_${workspaceId}`, name: 'Nagad Wallet', type: 'mfs', provider: 'Nagad', icon: 'smartphone', color: '#ea580c' },
-      { defaultId: `acc_dspf_baf_${workspaceId}`, name: 'DSPF (BAF)', type: 'savings_dps', provider: 'BAF / DSPF', icon: 'piggy-bank', color: '#0d9488' },
-      { defaultId: `acc_unity_fund_${workspaceId}`, name: 'Unity Fund-2026', type: 'savings_dps', provider: 'Unity Fund', icon: 'flag', color: '#eab308' },
-      { defaultId: `acc_los_fund_${workspaceId}`, name: 'LOS Fund', type: 'savings_dps', provider: 'LOS Fund', icon: 'layers', color: '#9333ea' },
-      { defaultId: `acc_income_earned_${workspaceId}`, name: 'Earned Revenue & Income', type: 'income_salary', provider: 'Revenue', icon: 'trending-up', color: '#10b981' },
-      { defaultId: `acc_expense_operating_${workspaceId}`, name: 'General Operating Expenses', type: 'expense_operating', provider: 'Operating', icon: 'receipt', color: '#ef4444' },
-      { defaultId: `acc_equity_offset_${workspaceId}`, name: 'Opening Balance Equity', type: 'opening_equity', provider: 'Equity', icon: 'scale', color: '#64748b' },
-    ];
-
-    let updated = false;
-    const allAccounts = this.get<FinancialAccount[]>(STORAGE_KEYS.ACCOUNTS, []);
-
-    for (const d of defaults) {
-      const uuid = toUuid(d.defaultId);
-      const nameKey = d.name.toLowerCase().trim();
-
-      // CRITICAL: NEVER resurrect an account deleted by user!
-      if (deletedAccs.has(uuid.toLowerCase()) || deletedAccs.has(nameKey)) {
-        continue;
-      }
-
-      const nameMatch = existingNames.has(nameKey);
-      const idMatch = existingUuids.has(uuid);
-
-      if (!nameMatch && !idMatch) {
-        const newAcc: FinancialAccount = {
-          id: uuid,
-          workspace_id: workspaceId,
-          name: d.name,
-          account_type_id: d.type,
-          provider: d.provider,
-          currency: 'BDT',
-          opening_balance: 0,
-          opening_date: new Date().toISOString().split('T')[0],
-          current_balance_cached: 0,
-          is_archived: false,
-          icon: d.icon,
-          color: d.color,
-          created_at: new Date().toISOString(),
-        };
-        allAccounts.push(newAcc);
-        supabaseSync.syncAccount(newAcc, workspaceId);
-        updated = true;
-      }
+      this.store.entries = [...otherEntries, ...data.entries];
+      this.store.lines = [...otherLines, ...newLines];
     }
 
-    if (updated) {
-      this.set(STORAGE_KEYS.ACCOUNTS, allAccounts);
-    }
-
-    return this.getAccounts(workspaceId);
+    this.notify();
   }
 
-  // Financial Accounts with Self-Healing Deduplication and Live Dynamic Ledger-Derived Balances
+  // Workspaces
+  getWorkspaces(userId?: string): Workspace[] {
+    if (!userId) return this.store.workspaces;
+    return this.store.workspaces.filter(w => w.created_by === userId);
+  }
+
+  async saveWorkspace(ws: Workspace): Promise<void> {
+    const idx = this.store.workspaces.findIndex(w => w.id === ws.id);
+    if (idx >= 0) {
+      this.store.workspaces[idx] = ws;
+    } else {
+      this.store.workspaces.push(ws);
+    }
+    if (ws.created_by) {
+      await supabaseSync.syncWorkspace(ws, ws.created_by);
+    }
+    this.notify();
+  }
+
+  initializeUserWorkspace(userId: string, userName?: string, userEmail?: string): { workspace: Workspace; isNew: boolean } {
+    const wsUuid = toUuid(`ws_${userId}`);
+    const existing = this.store.workspaces.find(w => w.id === wsUuid || w.created_by === userId);
+    if (existing) {
+      return { workspace: existing, isNew: false };
+    }
+
+    const newWs: Workspace = {
+      id: wsUuid,
+      name: `${userName || 'My'}'s Vault`,
+      type: 'personal',
+      created_by: userId,
+      currency: 'BDT',
+      description: `Primary personal financial vault for ${userEmail || userName || userId}`,
+      created_at: new Date().toISOString(),
+    };
+    this.store.workspaces.push(newWs);
+    return { workspace: newWs, isNew: true };
+  }
+
+  // ==========================================
+  // Financial Accounts with Live Ledger Calculations
+  // ==========================================
   getAccounts(workspaceId: string): FinancialAccount[] {
-    const rawList = this.get<FinancialAccount[]>(STORAGE_KEYS.ACCOUNTS, []).filter(a => a.workspace_id === workspaceId);
-    
-    // Self-healing deduplication pass for localStorage
-    const deduplicated: FinancialAccount[] = [];
-    const seenNames = new Map<string, FinancialAccount>();
-    let hadDuplicates = false;
-
-    for (const a of rawList) {
-      const normName = a.name.toLowerCase().trim();
-      const existing = seenNames.get(normName);
-      if (!existing) {
-        seenNames.set(normName, a);
-        deduplicated.push(a);
-      } else {
-        hadDuplicates = true;
-        // Merge state: preserve non-zero balance
-        if ((!existing.current_balance_cached || existing.current_balance_cached === 0) && (a.current_balance_cached || a.opening_balance)) {
-          existing.current_balance_cached = a.current_balance_cached || a.opening_balance;
-          existing.opening_balance = a.opening_balance || existing.opening_balance;
-        }
-        // Remap any references pointing to this duplicate ID to the primary account ID
-        this.remapAccountId(a.id, existing.id, workspaceId);
-      }
-    }
-
-    if (hadDuplicates) {
-      const allAccs = this.get<FinancialAccount[]>(STORAGE_KEYS.ACCOUNTS, []);
-      const otherAccs = allAccs.filter(a => a.workspace_id !== workspaceId);
-      this.set(STORAGE_KEYS.ACCOUNTS, [...otherAccs, ...deduplicated]);
-    }
-
-    const list = deduplicated;
-    const lines = this.get<JournalLine[]>(STORAGE_KEYS.JOURNAL_LINES, []).filter(l => l.workspace_id === workspaceId);
-    const entries = this.get<JournalEntry[]>(STORAGE_KEYS.JOURNAL_ENTRIES, []).filter(e => e.workspace_id === workspaceId);
+    const list = this.store.accounts.filter(a => a.workspace_id === workspaceId);
+    const lines = this.store.lines.filter(l => l.workspace_id === workspaceId);
+    const entries = this.store.entries.filter(e => e.workspace_id === workspaceId);
 
     const validEntryIds = new Set(
       entries.filter(e => e.status === 'posted').map(e => e.id)
@@ -709,7 +318,6 @@ class DatabaseEngine {
       if (normalDebitTypes.has(a.account_type_id)) {
         calculatedBalance = hasLines ? (d - c) : (Number(a.opening_balance) || Number(a.current_balance_cached) || 0);
       } else {
-        // Credit normal (credit_card, loan_payable, equity, income)
         calculatedBalance = hasLines ? (c - d) : (Number(a.opening_balance) || Number(a.current_balance_cached) || 0);
       }
 
@@ -720,73 +328,51 @@ class DatabaseEngine {
     });
   }
 
-  saveAccount(account: FinancialAccount): void {
-    const list = this.get<FinancialAccount[]>(STORAGE_KEYS.ACCOUNTS, []);
-    const nameKey = account.name.toLowerCase().trim();
-    
-    // Find index by ID first, then by normalized name in the same workspace to prevent duplicate heads
-    let idx = list.findIndex(a => a.id === account.id);
-    if (idx === -1) {
-      idx = list.findIndex(a => a.workspace_id === account.workspace_id && a.name.toLowerCase().trim() === nameKey);
-    }
-
+  async saveAccount(account: FinancialAccount): Promise<FinancialAccount> {
+    const saved = await supabaseSync.syncAccount(account, account.workspace_id);
+    const idx = this.store.accounts.findIndex(a => a.id === saved.id);
     if (idx >= 0) {
-      const existingId = list[idx].id;
-      list[idx] = { ...list[idx], ...account, id: existingId };
-      if (account.id !== existingId) {
-        this.remapAccountId(account.id, existingId, account.workspace_id);
-      }
+      this.store.accounts[idx] = saved;
     } else {
-      list.push(account);
+      this.store.accounts.push(saved);
     }
-
-    // If account was marked as deleted, unmark it
-    const deletedAccs = this.get<string[]>(STORAGE_KEYS.DELETED_ACCOUNTS, []);
-    const updatedDeleted = deletedAccs.filter(id => id !== account.id && id !== nameKey);
-    if (updatedDeleted.length !== deletedAccs.length) {
-      this.set(STORAGE_KEYS.DELETED_ACCOUNTS, updatedDeleted);
-    }
-    this.set(STORAGE_KEYS.ACCOUNTS, list);
-    supabaseSync.syncAccount(account, account.workspace_id);
+    this.notify();
+    return saved;
   }
 
-  async deleteAccount(arg1: string, arg2: string): Promise<{ success: boolean; error?: string }> {
-    const list = this.get<FinancialAccount[]>(STORAGE_KEYS.ACCOUNTS, []);
+  async deleteAccount(arg1: string, arg2: string): Promise<DeleteResult> {
+    const list = this.store.accounts;
     let accountId = arg1;
     let workspaceId = arg2;
     if (list.some(a => a.id === arg2) && !list.some(a => a.id === arg1)) {
       accountId = arg2;
       workspaceId = arg1;
     }
-    const acc = list.find(a => a.id === accountId);
-    this.set(STORAGE_KEYS.ACCOUNTS, list.filter(a => a.id !== accountId));
 
-    // Permanently record in DELETED_ACCOUNTS so ensureDefaultAccountsForWorkspace NEVER brings it back!
-    const deletedAccs = this.get<string[]>(STORAGE_KEYS.DELETED_ACCOUNTS, []);
-    if (!deletedAccs.includes(accountId)) deletedAccs.push(accountId);
-    if (acc && !deletedAccs.includes(acc.name.toLowerCase().trim())) {
-      deletedAccs.push(acc.name.toLowerCase().trim());
+    const result = await supabaseSync.deleteAccount(accountId, workspaceId);
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to delete account');
     }
-    this.set(STORAGE_KEYS.DELETED_ACCOUNTS, deletedAccs);
 
-    // Also purge local journal lines associated with this account
-    const lines = this.get<JournalLine[]>(STORAGE_KEYS.JOURNAL_LINES, []);
-    this.set(STORAGE_KEYS.JOURNAL_LINES, lines.filter(l => l.account_id !== accountId));
+    if (result.action === 'archived') {
+      const acc = this.store.accounts.find(a => a.id === accountId);
+      if (acc) acc.is_archived = true;
+    } else {
+      this.store.accounts = this.store.accounts.filter(a => a.id !== accountId);
+    }
 
-    // Also purge local credit cards tied to this account
-    const cards = this.get<CreditCard[]>(STORAGE_KEYS.CREDIT_CARDS, []);
-    this.set(STORAGE_KEYS.CREDIT_CARDS, cards.filter(c => c.account_id !== accountId));
-
-    return await supabaseSync.deleteAccount(accountId, workspaceId, acc?.name);
+    this.notify();
+    return result;
   }
 
-  // Journal Entries & Lines
+  // ==========================================
+  // Journal Entries & Double-Entry Posting
+  // ==========================================
   getJournalEntries(workspaceId: string): JournalEntry[] {
-    const entries = this.get<JournalEntry[]>(STORAGE_KEYS.JOURNAL_ENTRIES, []);
-    const lines = this.get<JournalLine[]>(STORAGE_KEYS.JOURNAL_LINES, []);
-    
+    const entries = this.store.entries.filter(e => e.workspace_id === workspaceId);
+    const lines = this.store.lines.filter(l => l.workspace_id === workspaceId);
+
     return entries
-      .filter(e => e.workspace_id === workspaceId)
       .map(e => ({
         ...e,
         lines: lines.filter(l => l.journal_entry_id === e.id),
@@ -794,11 +380,7 @@ class DatabaseEngine {
       .sort((a, b) => new Date(b.entry_date).getTime() - new Date(a.entry_date).getTime());
   }
 
-  /**
-   * Post Double-Entry Journal Transaction
-   * Enforces: sum(debits) === sum(credits)
-   */
-  postJournalEntry(
+  async postJournalEntry(
     workspaceId: string,
     params: {
       memo: string;
@@ -818,7 +400,7 @@ class DatabaseEngine {
         tags?: string[];
       }>;
     }
-  ): { success: boolean; entryId?: string; error?: string } {
+  ): Promise<{ success: boolean; entryId?: string; error?: string }> {
     const totalDebit = params.lines
       .filter(l => l.line_type === 'debit')
       .reduce((sum, l) => sum + Number(l.amount), 0);
@@ -826,11 +408,10 @@ class DatabaseEngine {
       .filter(l => l.line_type === 'credit')
       .reduce((sum, l) => sum + Number(l.amount), 0);
 
-    // Exact numeric equality check (rounded to 2 decimals)
     if (Math.abs(totalDebit - totalCredit) > 0.001) {
       return {
         success: false,
-        error: `Unbalanced journal entry rejected. Total debits (${totalDebit.toFixed(2)}) must equal total credits (${totalCredit.toFixed(2)}).`,
+        error: `Unbalanced journal entry rejected. Debits (${totalDebit.toFixed(2)}) must equal credits (${totalCredit.toFixed(2)}).`,
       };
     }
 
@@ -839,14 +420,10 @@ class DatabaseEngine {
     }
 
     const entryId = generateUuid();
-    const currentEntries = this.get<JournalEntry[]>(STORAGE_KEYS.JOURNAL_ENTRIES, []);
-    const currentLines = this.get<JournalLine[]>(STORAGE_KEYS.JOURNAL_LINES, []);
-    const accounts = this.get<FinancialAccount[]>(STORAGE_KEYS.ACCOUNTS, []);
-
     const newEntry: JournalEntry = {
       id: entryId,
       workspace_id: workspaceId,
-      entry_number: currentEntries.length + 1,
+      entry_number: this.store.entries.length + 1,
       entry_date: params.entry_date,
       period_end_date: params.period_end_date || undefined,
       memo: params.memo,
@@ -875,40 +452,30 @@ class DatabaseEngine {
       created_at: new Date().toISOString(),
     }));
 
-    // Update account balances atomically
+    // Authoritative persist to Supabase
+    await supabaseSync.syncJournalEntry({ ...newEntry, lines: newLines }, workspaceId);
+
+    // Update in-memory state
+    this.store.entries.unshift(newEntry);
+    this.store.lines.push(...newLines);
+
+    // Update account balances atomically in memory
     for (const line of newLines) {
-      const acc = accounts.find(a => a.id === line.account_id);
+      const acc = this.store.accounts.find(a => a.id === line.account_id);
       if (acc) {
         const isDebitNormal = ['cash', 'bank', 'mfs', 'savings_dps', 'investment', 'receivable', 'property_asset', 'expense_operating', 'expense_finance'].includes(acc.account_type_id);
         const change = line.line_type === 'debit' ? line.amount : -line.amount;
         acc.current_balance_cached = isDebitNormal
           ? acc.current_balance_cached + change
           : acc.current_balance_cached - change;
-        supabaseSync.syncAccount(acc, workspaceId);
       }
     }
 
-    this.set(STORAGE_KEYS.JOURNAL_ENTRIES, [newEntry, ...currentEntries]);
-    this.set(STORAGE_KEYS.JOURNAL_LINES, [...currentLines, ...newLines]);
-    this.set(STORAGE_KEYS.ACCOUNTS, accounts);
-
-    // Sync complete journal transaction to Supabase
-    supabaseSync.syncJournalEntry({ ...newEntry, lines: newLines }, workspaceId);
-
-    this.logAudit(workspaceId, 'POST_JOURNAL_ENTRY', 'journal_entry', entryId, {
-      memo: params.memo,
-      amount: totalDebit,
-      source_type: params.source_type,
-      is_historical: params.is_historical,
-    });
-
+    this.notify();
     return { success: true, entryId };
   }
 
-  /**
-   * Update an existing Journal Entry (Atomic rollback of previous lines + application of new lines)
-   */
-  updateJournalEntry(
+  async updateJournalEntry(
     workspaceId: string,
     entryId: string,
     params: {
@@ -927,7 +494,7 @@ class DatabaseEngine {
         tags?: string[];
       }>;
     }
-  ): { success: boolean; error?: string } {
+  ): Promise<{ success: boolean; error?: string }> {
     const totalDebit = params.lines
       .filter(l => l.line_type === 'debit')
       .reduce((sum, l) => sum + Number(l.amount), 0);
@@ -936,39 +503,31 @@ class DatabaseEngine {
       .reduce((sum, l) => sum + Number(l.amount), 0);
 
     if (Math.abs(totalDebit - totalCredit) > 0.001) {
-      return {
-        success: false,
-        error: `Unbalanced journal entry rejected. Total debits (${totalDebit.toFixed(2)}) must equal total credits (${totalCredit.toFixed(2)}).`,
-      };
+      return { success: false, error: 'Unbalanced journal entry rejected. Debits must equal credits.' };
     }
 
-    const currentEntries = this.get<JournalEntry[]>(STORAGE_KEYS.JOURNAL_ENTRIES, []);
-    const currentLines = this.get<JournalLine[]>(STORAGE_KEYS.JOURNAL_LINES, []);
-    const accounts = this.get<FinancialAccount[]>(STORAGE_KEYS.ACCOUNTS, []);
-
-    const existingEntryIndex = currentEntries.findIndex(e => e.id === entryId);
+    const existingEntryIndex = this.store.entries.findIndex(e => e.id === entryId);
     if (existingEntryIndex === -1) {
-      return { success: false, error: 'Journal entry not found.' };
+      return { success: false, error: 'Transaction not found.' };
     }
 
-    const existingEntry = currentEntries[existingEntryIndex];
-    const oldLines = currentLines.filter(l => l.journal_entry_id === entryId);
+    const existingEntry = this.store.entries[existingEntryIndex];
+    const previousLines = this.store.lines.filter(l => l.journal_entry_id === entryId);
 
-    // 1. Rollback old line effects on accounts
-    for (const oldLine of oldLines) {
-      const acc = accounts.find(a => a.id === oldLine.account_id);
+    // Rollback previous line effects
+    for (const line of previousLines) {
+      const acc = this.store.accounts.find(a => a.id === line.account_id);
       if (acc) {
         const isDebitNormal = ['cash', 'bank', 'mfs', 'savings_dps', 'investment', 'receivable', 'property_asset', 'expense_operating', 'expense_finance'].includes(acc.account_type_id);
-        const change = oldLine.line_type === 'debit' ? -oldLine.amount : oldLine.amount;
+        const rollback = line.line_type === 'debit' ? -line.amount : line.amount;
         acc.current_balance_cached = isDebitNormal
-          ? acc.current_balance_cached + change
-          : acc.current_balance_cached - change;
+          ? acc.current_balance_cached + rollback
+          : acc.current_balance_cached - rollback;
       }
     }
 
-    // 2. Generate new lines
     const defaultOperatingAccId = toUuid(`acc_expense_operating_${workspaceId}`);
-    const updatedLines: JournalLine[] = params.lines.map((l) => ({
+    const updatedLines: JournalLine[] = params.lines.map((l, i) => ({
       id: generateUuid(),
       journal_entry_id: entryId,
       workspace_id: workspaceId,
@@ -982,20 +541,18 @@ class DatabaseEngine {
       created_at: new Date().toISOString(),
     }));
 
-    // 3. Apply new line effects on accounts
+    // Apply new line effects
     for (const line of updatedLines) {
-      const acc = accounts.find(a => a.id === line.account_id);
+      const acc = this.store.accounts.find(a => a.id === line.account_id);
       if (acc) {
         const isDebitNormal = ['cash', 'bank', 'mfs', 'savings_dps', 'investment', 'receivable', 'property_asset', 'expense_operating', 'expense_finance'].includes(acc.account_type_id);
         const change = line.line_type === 'debit' ? line.amount : -line.amount;
         acc.current_balance_cached = isDebitNormal
           ? acc.current_balance_cached + change
           : acc.current_balance_cached - change;
-        supabaseSync.syncAccount(acc, workspaceId);
       }
     }
 
-    // 4. Update entry object
     const updatedEntry: JournalEntry = {
       ...existingEntry,
       memo: params.memo,
@@ -1006,71 +563,53 @@ class DatabaseEngine {
       lines: updatedLines,
     };
 
-    currentEntries[existingEntryIndex] = updatedEntry;
-    const remainingLines = currentLines.filter(l => l.journal_entry_id !== entryId);
+    // Authoritative persist to Supabase
+    await supabaseSync.syncJournalEntry(updatedEntry, workspaceId);
 
-    this.set(STORAGE_KEYS.JOURNAL_ENTRIES, currentEntries);
-    this.set(STORAGE_KEYS.JOURNAL_LINES, [...remainingLines, ...updatedLines]);
-    this.set(STORAGE_KEYS.ACCOUNTS, accounts);
-
-    // Sync to Supabase
-    supabaseSync.syncJournalEntry(updatedEntry, workspaceId);
-    this.logAudit(workspaceId, 'UPDATE_JOURNAL_ENTRY', 'journal_entry', entryId, { memo: params.memo });
-
+    this.store.entries[existingEntryIndex] = updatedEntry;
+    this.store.lines = this.store.lines.filter(l => l.journal_entry_id !== entryId).concat(updatedLines);
+    this.notify();
     return { success: true };
   }
 
-  /**
-   * Delete a Journal Entry completely (reverts account balances and removes entry & lines)
-   */
-  deleteJournalEntry(arg1: string, arg2: string): { success: boolean; error?: string } {
-    const currentEntries = this.get<JournalEntry[]>(STORAGE_KEYS.JOURNAL_ENTRIES, []);
-    const currentLines = this.get<JournalLine[]>(STORAGE_KEYS.JOURNAL_LINES, []);
-    const accounts = this.get<FinancialAccount[]>(STORAGE_KEYS.ACCOUNTS, []);
-
+  async deleteJournalEntry(arg1: string, arg2: string): Promise<DeleteResult> {
     let workspaceId = arg1;
     let entryId = arg2;
-    if (currentEntries.some(e => e.id === arg1) && !currentEntries.some(e => e.id === arg2)) {
+    if (this.store.entries.some(e => e.id === arg1) && !this.store.entries.some(e => e.id === arg2)) {
       entryId = arg1;
       workspaceId = arg2;
     }
 
-    const entryToDelete = currentEntries.find(e => e.id === entryId);
+    const entryToDelete = this.store.entries.find(e => e.id === entryId);
     if (!entryToDelete) {
       return { success: false, error: 'Transaction not found.' };
     }
 
-    const linesToDelete = currentLines.filter(l => l.journal_entry_id === entryId);
+    const result = await supabaseSync.deleteJournalEntry(entryId, workspaceId);
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to delete transaction from database');
+    }
 
-    // Revert account balances
+    // Revert balance in memory
+    const linesToDelete = this.store.lines.filter(l => l.journal_entry_id === entryId);
     for (const line of linesToDelete) {
-      const acc = accounts.find(a => a.id === line.account_id);
+      const acc = this.store.accounts.find(a => a.id === line.account_id);
       if (acc) {
         const isDebitNormal = ['cash', 'bank', 'mfs', 'savings_dps', 'investment', 'receivable', 'property_asset', 'expense_operating', 'expense_finance'].includes(acc.account_type_id);
         const change = line.line_type === 'debit' ? -line.amount : line.amount;
         acc.current_balance_cached = isDebitNormal
           ? acc.current_balance_cached + change
           : acc.current_balance_cached - change;
-        supabaseSync.syncAccount(acc, workspaceId);
       }
     }
 
-    // Remove entry and lines from local storage
-    this.set(STORAGE_KEYS.JOURNAL_ENTRIES, currentEntries.filter(e => e.id !== entryId));
-    this.set(STORAGE_KEYS.JOURNAL_LINES, currentLines.filter(l => l.journal_entry_id !== entryId));
-    this.set(STORAGE_KEYS.ACCOUNTS, accounts);
-
-    // Sync deletion to Supabase
-    supabaseSync.deleteJournalEntry(entryId, workspaceId);
-    this.logAudit(workspaceId, 'DELETE_JOURNAL_ENTRY', 'journal_entry', entryId, { memo: entryToDelete.memo });
-
-    return { success: true };
+    this.store.entries = this.store.entries.filter(e => e.id !== entryId);
+    this.store.lines = this.store.lines.filter(l => l.journal_entry_id !== entryId);
+    this.notify();
+    return result;
   }
 
-  /**
-   * Account Transfer (Debits destination, credits source without touching income/expense)
-   */
-  postTransfer(
+  async postTransfer(
     workspaceId: string,
     sourceAccountId: string,
     destinationAccountId: string,
@@ -1078,7 +617,7 @@ class DatabaseEngine {
     date: string,
     memo: string,
     periodEndDate?: string
-  ): { success: boolean; error?: string } {
+  ): Promise<{ success: boolean; error?: string }> {
     if (sourceAccountId === destinationAccountId) {
       return { success: false, error: 'Source and destination accounts must be different.' };
     }
@@ -1104,24 +643,16 @@ class DatabaseEngine {
     });
   }
 
-  /**
-   * Controlled Reversal (Audit-compliant correction, never silent edit)
-   */
-  postReversal(
+  async postReversal(
     workspaceId: string,
     entryId: string,
     reason: string
-  ): { success: boolean; error?: string } {
-    const entries = this.get<JournalEntry[]>(STORAGE_KEYS.JOURNAL_ENTRIES, []);
-    const lines = this.get<JournalLine[]>(STORAGE_KEYS.JOURNAL_LINES, []);
-    const target = entries.find(e => e.id === entryId);
-
+  ): Promise<{ success: boolean; error?: string }> {
+    const target = this.store.entries.find(e => e.id === entryId);
     if (!target) return { success: false, error: 'Transaction not found.' };
     if (target.status === 'reversed') return { success: false, error: 'Transaction is already reversed.' };
 
-    const targetLines = lines.filter(l => l.journal_entry_id === entryId);
-    
-    // Invert debits and credits
+    const targetLines = this.store.lines.filter(l => l.journal_entry_id === entryId);
     const reversalLines = targetLines.map(l => ({
       account_id: l.account_id,
       line_type: (l.line_type === 'debit' ? 'credit' : 'debit') as 'debit' | 'credit',
@@ -1130,7 +661,7 @@ class DatabaseEngine {
       category_id: l.category_id,
     }));
 
-    const result = this.postJournalEntry(workspaceId, {
+    const result = await this.postJournalEntry(workspaceId, {
       memo: `REVERSAL: ${target.memo} (${reason})`,
       source_type: target.source_type,
       entry_date: new Date().toISOString().split('T')[0],
@@ -1139,56 +670,19 @@ class DatabaseEngine {
 
     if (result.success) {
       target.status = 'reversed';
-      this.set(STORAGE_KEYS.JOURNAL_ENTRIES, entries);
-      this.logAudit(workspaceId, 'REVERSE_JOURNAL_ENTRY', 'journal_entry', entryId, {
-        reason,
-        reversalEntryId: result.entryId,
-      });
+      this.notify();
     }
 
     return result;
   }
 
-  // Categories & Subcategories with Self-Healing Deduplication
+  // ==========================================
+  // Categories & Subcategories
+  // ==========================================
   getCategories(workspaceId: string): Category[] {
-    const rawList = this.get<Category[]>(STORAGE_KEYS.CATEGORIES, []).filter(c => c.workspace_id === workspaceId && !c.is_archived);
-    
-    // Deduplicate by normalized name + type
-    const deduplicated: Category[] = [];
-    const seen = new Map<string, Category>();
-    let hadDuplicates = false;
-
-    for (const c of rawList) {
-      const key = `${c.name.toLowerCase().trim()}::${c.type}`;
-      const existing = seen.get(key);
-      if (!existing) {
-        seen.set(key, c);
-        deduplicated.push(c);
-      } else {
-        hadDuplicates = true;
-        if (!existing.target_savings_account_id && c.target_savings_account_id) {
-          existing.target_savings_account_id = c.target_savings_account_id;
-        }
-        if (!existing.parent_id && c.parent_id) {
-          existing.parent_id = c.parent_id;
-        }
-        if (!existing.income_type && c.income_type) {
-          existing.income_type = c.income_type;
-        }
-        if (!existing.description && c.description) {
-          existing.description = c.description;
-        }
-        this.remapCategoryId(c.id, existing.id, workspaceId);
-      }
-    }
-
-    if (hadDuplicates) {
-      const allCats = this.get<Category[]>(STORAGE_KEYS.CATEGORIES, []);
-      const otherCats = allCats.filter(c => c.workspace_id !== workspaceId);
-      this.set(STORAGE_KEYS.CATEGORIES, [...otherCats, ...deduplicated]);
-    }
-
-    return deduplicated;
+    return this.store.categories
+      .filter(c => c.workspace_id === workspaceId && !c.is_archived)
+      .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
   }
 
   getRootCategories(workspaceId: string, type?: Category['type']): Category[] {
@@ -1199,512 +693,350 @@ class DatabaseEngine {
     return this.getCategories(workspaceId).filter(c => c.parent_id === parentId);
   }
 
-  async saveCategory(cat: Category): Promise<{ success: boolean; id?: string; error?: string }> {
-    const list = this.get<Category[]>(STORAGE_KEYS.CATEGORIES, []);
-    const nameKey = cat.name.toLowerCase().trim();
-    
-    // Match by ID first; if not found, match by workspace + name + type to prevent duplicate category heads
-    let idx = list.findIndex(c => c.id === cat.id);
-    if (idx === -1) {
-      idx = list.findIndex(c => c.workspace_id === cat.workspace_id && c.name.toLowerCase().trim() === nameKey && c.type === cat.type);
-    }
-
+  async saveCategory(cat: Category): Promise<Category> {
+    const saved = await supabaseSync.syncCategory(cat, cat.workspace_id);
+    const idx = this.store.categories.findIndex(c => c.id === saved.id);
     if (idx >= 0) {
-      const existingId = list[idx].id;
-      list[idx] = { ...list[idx], ...cat, id: existingId };
-      if (cat.id !== existingId) {
-        this.remapCategoryId(cat.id, existingId, cat.workspace_id);
-      }
+      this.store.categories[idx] = saved;
     } else {
-      list.push(cat);
+      this.store.categories.push(saved);
     }
-
-    // If this category was previously marked as deleted, unmark it
-    const deleted = this.get<string[]>(STORAGE_KEYS.DELETED_CATEGORIES, []);
-    const updatedDeleted = deleted.filter(d => d !== cat.id && d !== nameKey);
-    if (updatedDeleted.length !== deleted.length) {
-      this.set(STORAGE_KEYS.DELETED_CATEGORIES, updatedDeleted);
-    }
-    this.set(STORAGE_KEYS.CATEGORIES, list);
-    return await supabaseSync.syncCategory(cat, cat.workspace_id);
+    this.notify();
+    return saved;
   }
 
-  async deleteCategory(categoryId: string, workspaceId: string): Promise<{ success: boolean; error?: string }> {
-    const list = this.get<Category[]>(STORAGE_KEYS.CATEGORIES, []);
-    const cat = list.find(c => c.id === categoryId);
-    if (cat) {
-      const deleted = this.get<string[]>(STORAGE_KEYS.DELETED_CATEGORIES, []);
-      if (!deleted.includes(cat.id)) deleted.push(cat.id);
-      const nameLower = cat.name.toLowerCase().trim();
-      if (!deleted.includes(nameLower)) deleted.push(nameLower);
-
-      // Also tombstone all child subcategories
-      const subcategories = list.filter(c => c.parent_id === categoryId);
-      for (const sub of subcategories) {
-        if (!deleted.includes(sub.id)) deleted.push(sub.id);
-        const subNameLower = sub.name.toLowerCase().trim();
-        if (!deleted.includes(subNameLower)) deleted.push(subNameLower);
-      }
-
-      this.set(STORAGE_KEYS.DELETED_CATEGORIES, deleted);
-    }
-    // Also remove any subcategories belonging to this category
-    const remaining = list.filter(c => c.id !== categoryId && c.parent_id !== categoryId);
-    this.set(STORAGE_KEYS.CATEGORIES, remaining);
-    return await supabaseSync.deleteCategory(categoryId, workspaceId, cat?.name);
-  }
-
-  remapCategoryId(oldId: string, newId: string, workspaceId: string): void {
-    if (oldId === newId) return;
-    const cats = this.get<Category[]>(STORAGE_KEYS.CATEGORIES, []);
-    const oldCat = cats.find(c => c.id === oldId);
-    const newCat = cats.find(c => c.id === newId);
-
-    if (oldCat && newCat) {
-      if (!newCat.target_savings_account_id && oldCat.target_savings_account_id) {
-        newCat.target_savings_account_id = oldCat.target_savings_account_id;
-      }
-      if (!newCat.parent_id && oldCat.parent_id) {
-        newCat.parent_id = oldCat.parent_id;
-      }
-      if (!newCat.income_type && oldCat.income_type) {
-        newCat.income_type = oldCat.income_type;
-      }
-      if (!newCat.description && oldCat.description) {
-        newCat.description = oldCat.description;
-      }
-      // Remove the old duplicate object
-      this.set(STORAGE_KEYS.CATEGORIES, cats.filter(c => c.id !== oldId));
-    } else if (oldCat && !newCat) {
-      oldCat.id = newId;
-      this.set(STORAGE_KEYS.CATEGORIES, cats);
+  async deleteCategory(categoryId: string, workspaceId: string): Promise<DeleteResult> {
+    const result = await supabaseSync.deleteCategory(categoryId, workspaceId);
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to delete category from database');
     }
 
-    // Remap parent references
-    const allCats = this.get<Category[]>(STORAGE_KEYS.CATEGORIES, []);
-    let updatedParent = false;
-    allCats.forEach(c => {
-      if (c.parent_id === oldId) {
-        c.parent_id = newId;
-        updatedParent = true;
-      }
-    });
-    if (updatedParent) this.set(STORAGE_KEYS.CATEGORIES, allCats);
-
-    const lines = this.get<JournalLine[]>(STORAGE_KEYS.JOURNAL_LINES, []);
-    let updatedLines = false;
-    lines.forEach(l => {
-      if (l.category_id === oldId) {
-        l.category_id = newId;
-        updatedLines = true;
-      }
-    });
-    if (updatedLines) this.set(STORAGE_KEYS.JOURNAL_LINES, lines);
-
-    const budgets = this.get<Budget[]>(STORAGE_KEYS.BUDGETS, []);
-    let updatedBudgets = false;
-    budgets.forEach(b => {
-      if (b.category_id === oldId) {
-        b.category_id = newId;
-        updatedBudgets = true;
-      }
-    });
-    if (updatedBudgets) this.set(STORAGE_KEYS.BUDGETS, budgets);
-
-    const rules = this.get<RecurringRule[]>(STORAGE_KEYS.RECURRING_RULES, []);
-    let updatedRules = false;
-    rules.forEach(r => {
-      if (r.category_id === oldId) {
-        r.category_id = newId;
-        updatedRules = true;
-      }
-    });
-    if (updatedRules) this.set(STORAGE_KEYS.RECURRING_RULES, rules);
+    // Remove category and child subcategories from in-memory store
+    this.store.categories = this.store.categories.filter(c => c.id !== categoryId && c.parent_id !== categoryId);
+    this.notify();
+    return result;
   }
 
-  remapAccountId(oldId: string, newId: string, workspaceId: string): void {
-    if (oldId === newId) return;
-    const accs = this.get<FinancialAccount[]>(STORAGE_KEYS.ACCOUNTS, []);
-    const oldAcc = accs.find(a => a.id === oldId);
-    const newAcc = accs.find(a => a.id === newId);
-
-    if (oldAcc && newAcc) {
-      if ((!newAcc.current_balance_cached || newAcc.current_balance_cached === 0) && oldAcc.current_balance_cached) {
-        newAcc.current_balance_cached = oldAcc.current_balance_cached;
-      }
-      if ((!newAcc.opening_balance || newAcc.opening_balance === 0) && oldAcc.opening_balance) {
-        newAcc.opening_balance = oldAcc.opening_balance;
-      }
-      // Remove old duplicate object
-      this.set(STORAGE_KEYS.ACCOUNTS, accs.filter(a => a.id !== oldId));
-    } else if (oldAcc && !newAcc) {
-      oldAcc.id = newId;
-      this.set(STORAGE_KEYS.ACCOUNTS, accs);
-    }
-
-    const lines = this.get<JournalLine[]>(STORAGE_KEYS.JOURNAL_LINES, []);
-    let updatedLines = false;
-    lines.forEach(l => {
-      if (l.account_id === oldId) {
-        l.account_id = newId;
-        updatedLines = true;
-      }
-    });
-    if (updatedLines) this.set(STORAGE_KEYS.JOURNAL_LINES, lines);
-
-    const cards = this.get<CreditCard[]>(STORAGE_KEYS.CREDIT_CARDS, []);
-    let updatedCards = false;
-    cards.forEach(c => {
-      if (c.account_id === oldId) {
-        c.account_id = newId;
-        updatedCards = true;
-      }
-    });
-    if (updatedCards) this.set(STORAGE_KEYS.CREDIT_CARDS, cards);
-
-    const loans = this.get<Loan[]>(STORAGE_KEYS.LOANS, []);
-    let updatedLoans = false;
-    loans.forEach(l => {
-      if (l.account_id === oldId) {
-        l.account_id = newId;
-        updatedLoans = true;
-      }
-    });
-    if (updatedLoans) this.set(STORAGE_KEYS.LOANS, loans);
-
-    const goals = this.get<SavingsGoal[]>(STORAGE_KEYS.SAVINGS_GOALS, []);
-    let updatedGoals = false;
-    goals.forEach(g => {
-      if (g.account_id === oldId) {
-        g.account_id = newId;
-        updatedGoals = true;
-      }
-    });
-    if (updatedGoals) this.set(STORAGE_KEYS.SAVINGS_GOALS, goals);
-
-    const cats = this.get<Category[]>(STORAGE_KEYS.CATEGORIES, []);
-    let updatedCats = false;
-    cats.forEach(c => {
-      if (c.target_savings_account_id === oldId) {
-        c.target_savings_account_id = newId;
-        updatedCats = true;
-      }
-    });
-    if (updatedCats) this.set(STORAGE_KEYS.CATEGORIES, cats);
-
-    const rules = this.get<RecurringRule[]>(STORAGE_KEYS.RECURRING_RULES, []);
-    let updatedRules = false;
-    rules.forEach(r => {
-      if (r.source_account_id === oldId) {
-        r.source_account_id = newId;
-        updatedRules = true;
-      }
-      if (r.destination_account_id === oldId) {
-        r.destination_account_id = newId;
-        updatedRules = true;
-      }
-    });
-    if (updatedRules) this.set(STORAGE_KEYS.RECURRING_RULES, rules);
-  }
-
+  // ==========================================
   // Credit Cards
+  // ==========================================
   getCreditCards(workspaceId: string): CreditCard[] {
-    const list = this.get<CreditCard[]>(STORAGE_KEYS.CREDIT_CARDS, []);
-    return list.filter(c => c.workspace_id === workspaceId);
+    return this.store.cards.filter(c => c.workspace_id === workspaceId);
   }
 
-  saveCreditCard(card: CreditCard): void {
-    const list = this.get<CreditCard[]>(STORAGE_KEYS.CREDIT_CARDS, []);
-    const idx = list.findIndex(c => c.id === card.id);
+  async saveCreditCard(card: CreditCard): Promise<CreditCard> {
+    const saved = await supabaseSync.syncCreditCard(card, card.workspace_id);
+    const idx = this.store.cards.findIndex(c => c.id === saved.id);
     if (idx >= 0) {
-      list[idx] = card;
+      this.store.cards[idx] = saved;
     } else {
-      list.push(card);
+      this.store.cards.push(saved);
     }
-    const deletedCards = this.get<string[]>(STORAGE_KEYS.DELETED_CARDS, []);
-    const updatedDeleted = deletedCards.filter(id => id !== card.id);
-    if (updatedDeleted.length !== deletedCards.length) {
-      this.set(STORAGE_KEYS.DELETED_CARDS, updatedDeleted);
-    }
-    this.set(STORAGE_KEYS.CREDIT_CARDS, list);
-    supabaseSync.syncCreditCard(card, card.workspace_id);
+    this.notify();
+    return saved;
   }
 
-  deleteCreditCard(arg1: string, arg2: string): void {
-    const list = this.get<CreditCard[]>(STORAGE_KEYS.CREDIT_CARDS, []);
+  async deleteCreditCard(arg1: string, arg2: string): Promise<DeleteResult> {
     let cardId = arg1;
     let workspaceId = arg2;
-    if (list.some(c => c.id === arg2) && !list.some(c => c.id === arg1)) {
+    if (this.store.cards.some(c => c.id === arg2) && !this.store.cards.some(c => c.id === arg1)) {
       cardId = arg2;
       workspaceId = arg1;
     }
-    const cardToDelete = list.find(c => c.id === cardId);
-    this.set(STORAGE_KEYS.CREDIT_CARDS, list.filter(c => c.id !== cardId));
 
-    const deletedCards = this.get<string[]>(STORAGE_KEYS.DELETED_CARDS, []);
-    if (!deletedCards.includes(cardId)) deletedCards.push(cardId);
-    this.set(STORAGE_KEYS.DELETED_CARDS, deletedCards);
-
-    supabaseSync.deleteCreditCard(cardId, workspaceId);
-
-    // Also remove or archive underlying liability account if user deletes card
-    if (cardToDelete?.account_id) {
-      this.deleteAccount(cardToDelete.account_id, workspaceId);
+    const card = this.store.cards.find(c => c.id === cardId);
+    const result = await supabaseSync.deleteCreditCard(cardId, workspaceId);
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to delete credit card');
     }
+
+    this.store.cards = this.store.cards.filter(c => c.id !== cardId);
+
+    // If underlying account has no transactions, archive or delete it
+    if (card?.account_id) {
+      try {
+        await this.deleteAccount(card.account_id, workspaceId);
+      } catch {}
+    }
+
+    this.notify();
+    return result;
   }
 
-  // Loans & Money Lent
+  // ==========================================
+  // Loans
+  // ==========================================
   getLoans(workspaceId: string): Loan[] {
-    const list = this.get<Loan[]>(STORAGE_KEYS.LOANS, []);
-    return list.filter(l => l.workspace_id === workspaceId);
+    return this.store.loans.filter(l => l.workspace_id === workspaceId);
   }
 
-  saveLoan(loan: Loan): void {
-    const list = this.get<Loan[]>(STORAGE_KEYS.LOANS, []);
-    const idx = list.findIndex(l => l.id === loan.id);
+  async saveLoan(loan: Loan): Promise<Loan> {
+    const saved = await supabaseSync.syncLoan(loan, loan.workspace_id);
+    const idx = this.store.loans.findIndex(l => l.id === saved.id);
     if (idx >= 0) {
-      list[idx] = loan;
+      this.store.loans[idx] = saved;
     } else {
-      list.push(loan);
+      this.store.loans.push(saved);
     }
-    const deletedLoans = this.get<string[]>(STORAGE_KEYS.DELETED_LOANS, []);
-    const updatedDeleted = deletedLoans.filter(id => id !== loan.id);
-    if (updatedDeleted.length !== deletedLoans.length) {
-      this.set(STORAGE_KEYS.DELETED_LOANS, updatedDeleted);
-    }
-    this.set(STORAGE_KEYS.LOANS, list);
-    supabaseSync.syncLoan(loan, loan.workspace_id);
+    this.notify();
+    return saved;
   }
 
-  deleteLoan(arg1: string, arg2: string): void {
-    const list = this.get<Loan[]>(STORAGE_KEYS.LOANS, []);
+  async deleteLoan(arg1: string, arg2: string): Promise<DeleteResult> {
     let loanId = arg1;
     let workspaceId = arg2;
-    if (list.some(l => l.id === arg2) && !list.some(l => l.id === arg1)) {
+    if (this.store.loans.some(l => l.id === arg2) && !this.store.loans.some(l => l.id === arg1)) {
       loanId = arg2;
       workspaceId = arg1;
     }
-    this.set(STORAGE_KEYS.LOANS, list.filter(l => l.id !== loanId));
 
-    const deletedLoans = this.get<string[]>(STORAGE_KEYS.DELETED_LOANS, []);
-    if (!deletedLoans.includes(loanId)) deletedLoans.push(loanId);
-    this.set(STORAGE_KEYS.DELETED_LOANS, deletedLoans);
+    const result = await supabaseSync.deleteLoan(loanId, workspaceId);
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to delete loan');
+    }
 
-    supabaseSync.deleteLoan(loanId, workspaceId);
+    this.store.loans = this.store.loans.filter(l => l.id !== loanId);
+    this.notify();
+    return result;
   }
 
+  // ==========================================
   // Properties
+  // ==========================================
   getProperties(workspaceId: string): Property[] {
-    const list = this.get<Property[]>(STORAGE_KEYS.PROPERTIES, []);
-    return list.filter(p => p.workspace_id === workspaceId);
+    return this.store.properties.filter(p => p.workspace_id === workspaceId);
   }
 
-  saveProperty(prop: Property): void {
-    const list = this.get<Property[]>(STORAGE_KEYS.PROPERTIES, []);
-    const idx = list.findIndex(p => p.id === prop.id);
+  async saveProperty(prop: Property): Promise<Property> {
+    const saved = await supabaseSync.syncProperty(prop, prop.workspace_id);
+    const idx = this.store.properties.findIndex(p => p.id === saved.id);
     if (idx >= 0) {
-      list[idx] = prop;
+      this.store.properties[idx] = saved;
     } else {
-      list.push(prop);
+      this.store.properties.push(saved);
     }
-    const deletedProps = this.get<string[]>(STORAGE_KEYS.DELETED_PROPERTIES, []);
-    const updatedDeleted = deletedProps.filter(id => id !== prop.id);
-    if (updatedDeleted.length !== deletedProps.length) {
-      this.set(STORAGE_KEYS.DELETED_PROPERTIES, updatedDeleted);
-    }
-    this.set(STORAGE_KEYS.PROPERTIES, list);
-    supabaseSync.syncProperty(prop, prop.workspace_id);
+    this.notify();
+    return saved;
   }
 
-  deleteProperty(arg1: string, arg2: string): void {
-    const list = this.get<Property[]>(STORAGE_KEYS.PROPERTIES, []);
+  async deleteProperty(arg1: string, arg2: string): Promise<DeleteResult> {
     let propertyId = arg1;
     let workspaceId = arg2;
-    if (list.some(p => p.id === arg2) && !list.some(p => p.id === arg1)) {
+    if (this.store.properties.some(p => p.id === arg2) && !this.store.properties.some(p => p.id === arg1)) {
       propertyId = arg2;
       workspaceId = arg1;
     }
-    this.set(STORAGE_KEYS.PROPERTIES, list.filter(p => p.id !== propertyId));
 
-    const deletedProps = this.get<string[]>(STORAGE_KEYS.DELETED_PROPERTIES, []);
-    if (!deletedProps.includes(propertyId)) deletedProps.push(propertyId);
-    this.set(STORAGE_KEYS.DELETED_PROPERTIES, deletedProps);
+    const result = await supabaseSync.deleteProperty(propertyId, workspaceId);
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to delete property');
+    }
 
-    supabaseSync.deleteProperty(propertyId, workspaceId);
+    this.store.properties = this.store.properties.filter(p => p.id !== propertyId);
+    this.notify();
+    return result;
   }
 
+  // ==========================================
   // Budgets
+  // ==========================================
   getBudgets(workspaceId: string): Budget[] {
-    const list = this.get<Budget[]>(STORAGE_KEYS.BUDGETS, []);
-    return list.filter(b => b.workspace_id === workspaceId);
+    return this.store.budgets.filter(b => b.workspace_id === workspaceId);
   }
 
-  saveBudget(budget: Budget): void {
-    const list = this.get<Budget[]>(STORAGE_KEYS.BUDGETS, []);
-    const idx = list.findIndex(b => b.id === budget.id);
+  async saveBudget(budget: Budget): Promise<Budget> {
+    const saved = await supabaseSync.syncBudget(budget, budget.workspace_id);
+    const idx = this.store.budgets.findIndex(b => b.id === saved.id);
     if (idx >= 0) {
-      list[idx] = budget;
+      this.store.budgets[idx] = saved;
     } else {
-      list.push(budget);
+      this.store.budgets.push(saved);
     }
-    const deletedBudgets = this.get<string[]>(STORAGE_KEYS.DELETED_BUDGETS, []);
-    const updatedDeleted = deletedBudgets.filter(id => id !== budget.id);
-    if (updatedDeleted.length !== deletedBudgets.length) {
-      this.set(STORAGE_KEYS.DELETED_BUDGETS, updatedDeleted);
-    }
-    this.set(STORAGE_KEYS.BUDGETS, list);
-    supabaseSync.syncBudget(budget, budget.workspace_id);
+    this.notify();
+    return saved;
   }
 
-  deleteBudget(arg1: string, arg2: string): void {
-    const list = this.get<Budget[]>(STORAGE_KEYS.BUDGETS, []);
+  async deleteBudget(arg1: string, arg2: string): Promise<DeleteResult> {
     let budgetId = arg1;
     let workspaceId = arg2;
-    if (list.some(b => b.id === arg2) && !list.some(b => b.id === arg1)) {
+    if (this.store.budgets.some(b => b.id === arg2) && !this.store.budgets.some(b => b.id === arg1)) {
       budgetId = arg2;
       workspaceId = arg1;
     }
-    this.set(STORAGE_KEYS.BUDGETS, list.filter(b => b.id !== budgetId));
 
-    const deletedBudgets = this.get<string[]>(STORAGE_KEYS.DELETED_BUDGETS, []);
-    if (!deletedBudgets.includes(budgetId)) deletedBudgets.push(budgetId);
-    this.set(STORAGE_KEYS.DELETED_BUDGETS, deletedBudgets);
+    const result = await supabaseSync.deleteBudget(budgetId, workspaceId);
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to delete budget');
+    }
 
-    supabaseSync.deleteBudget(budgetId, workspaceId);
+    this.store.budgets = this.store.budgets.filter(b => b.id !== budgetId);
+    this.notify();
+    return result;
   }
 
-  // Savings Goals & DPS
+  // ==========================================
+  // Savings Goals
+  // ==========================================
   getSavingsGoals(workspaceId: string): SavingsGoal[] {
-    const list = this.get<SavingsGoal[]>(STORAGE_KEYS.SAVINGS_GOALS, []);
-    return list.filter(g => g.workspace_id === workspaceId);
+    return this.store.goals.filter(g => g.workspace_id === workspaceId);
   }
 
-  saveSavingsGoal(goal: SavingsGoal): void {
-    const list = this.get<SavingsGoal[]>(STORAGE_KEYS.SAVINGS_GOALS, []);
-    const idx = list.findIndex(g => g.id === goal.id);
+  async saveSavingsGoal(goal: SavingsGoal): Promise<SavingsGoal> {
+    const saved = await supabaseSync.syncSavingsGoal(goal, goal.workspace_id);
+    const idx = this.store.goals.findIndex(g => g.id === saved.id);
     if (idx >= 0) {
-      list[idx] = goal;
+      this.store.goals[idx] = saved;
     } else {
-      list.push(goal);
+      this.store.goals.push(saved);
     }
-    const deletedGoals = this.get<string[]>(STORAGE_KEYS.DELETED_GOALS, []);
-    const updatedDeleted = deletedGoals.filter(id => id !== goal.id);
-    if (updatedDeleted.length !== deletedGoals.length) {
-      this.set(STORAGE_KEYS.DELETED_GOALS, updatedDeleted);
-    }
-    this.set(STORAGE_KEYS.SAVINGS_GOALS, list);
-    supabaseSync.syncSavingsGoal(goal, goal.workspace_id);
+    this.notify();
+    return saved;
   }
 
-  deleteSavingsGoal(arg1: string, arg2: string): void {
-    const list = this.get<SavingsGoal[]>(STORAGE_KEYS.SAVINGS_GOALS, []);
+  async deleteSavingsGoal(arg1: string, arg2: string): Promise<DeleteResult> {
     let goalId = arg1;
     let workspaceId = arg2;
-    if (list.some(g => g.id === arg2) && !list.some(g => g.id === arg1)) {
+    if (this.store.goals.some(g => g.id === arg2) && !this.store.goals.some(g => g.id === arg1)) {
       goalId = arg2;
       workspaceId = arg1;
     }
-    this.set(STORAGE_KEYS.SAVINGS_GOALS, list.filter(g => g.id !== goalId));
 
-    const deletedGoals = this.get<string[]>(STORAGE_KEYS.DELETED_GOALS, []);
-    if (!deletedGoals.includes(goalId)) deletedGoals.push(goalId);
-    this.set(STORAGE_KEYS.DELETED_GOALS, deletedGoals);
+    const result = await supabaseSync.deleteSavingsGoal(goalId, workspaceId);
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to delete savings goal');
+    }
 
-    supabaseSync.deleteSavingsGoal(goalId, workspaceId);
+    this.store.goals = this.store.goals.filter(g => g.id !== goalId);
+    this.notify();
+    return result;
   }
 
+  // ==========================================
   // Recurring Rules
+  // ==========================================
   getRecurringRules(workspaceId: string): RecurringRule[] {
-    const list = this.get<RecurringRule[]>(STORAGE_KEYS.RECURRING_RULES, []);
-    return list.filter(r => r.workspace_id === workspaceId);
+    return this.store.rules.filter(r => r.workspace_id === workspaceId);
   }
 
-  saveRecurringRule(rule: RecurringRule): void {
-    const list = this.get<RecurringRule[]>(STORAGE_KEYS.RECURRING_RULES, []);
-    const idx = list.findIndex(r => r.id === rule.id);
+  async saveRecurringRule(rule: RecurringRule): Promise<RecurringRule> {
+    const saved = await supabaseSync.syncRecurringRule(rule, rule.workspace_id);
+    const idx = this.store.rules.findIndex(r => r.id === saved.id);
     if (idx >= 0) {
-      list[idx] = rule;
+      this.store.rules[idx] = saved;
     } else {
-      list.push(rule);
+      this.store.rules.push(saved);
     }
-    const deletedRules = this.get<string[]>(STORAGE_KEYS.DELETED_RULES, []);
-    const updatedDeleted = deletedRules.filter(id => id !== rule.id);
-    if (updatedDeleted.length !== deletedRules.length) {
-      this.set(STORAGE_KEYS.DELETED_RULES, updatedDeleted);
-    }
-    this.set(STORAGE_KEYS.RECURRING_RULES, list);
-    supabaseSync.syncRecurringRule(rule, rule.workspace_id);
+    this.notify();
+    return saved;
   }
 
-  deleteRecurringRule(arg1: string, arg2: string): void {
-    const list = this.get<RecurringRule[]>(STORAGE_KEYS.RECURRING_RULES, []);
+  async deleteRecurringRule(arg1: string, arg2: string): Promise<DeleteResult> {
     let ruleId = arg1;
     let workspaceId = arg2;
-    if (list.some(r => r.id === arg2) && !list.some(r => r.id === arg1)) {
+    if (this.store.rules.some(r => r.id === arg2) && !this.store.rules.some(r => r.id === arg1)) {
       ruleId = arg2;
       workspaceId = arg1;
     }
-    this.set(STORAGE_KEYS.RECURRING_RULES, list.filter(r => r.id !== ruleId));
 
-    const deletedRules = this.get<string[]>(STORAGE_KEYS.DELETED_RULES, []);
-    if (!deletedRules.includes(ruleId)) deletedRules.push(ruleId);
-    this.set(STORAGE_KEYS.DELETED_RULES, deletedRules);
+    const result = await supabaseSync.deleteRecurringRule(ruleId, workspaceId);
+    if (!result.success) {
+      throw new Error(result.error || 'Failed to delete recurring rule');
+    }
 
-    supabaseSync.deleteRecurringRule(ruleId, workspaceId);
+    this.store.rules = this.store.rules.filter(r => r.id !== ruleId);
+    this.notify();
+    return result;
   }
 
-  // Audit Logs
-  getAuditLogs(workspaceId: string): AuditLog[] {
-    const list = this.get<AuditLog[]>(STORAGE_KEYS.AUDIT_LOGS, []);
-    return list.filter(a => a.workspace_id === workspaceId).reverse();
+  // ==========================================
+  // Income Types & Category Initialization
+  // ==========================================
+  private customIncomeTypes: Record<string, IncomeTypeItem[]> = {};
+
+  getIncomeTypes(workspaceId: string): IncomeTypeItem[] {
+    if (this.customIncomeTypes[workspaceId]) {
+      return this.customIncomeTypes[workspaceId];
+    }
+    return [
+      { id: 'salary', name: 'Salary / Employment', description: 'Monthly wages, official pay, bonuses', color: '#10b981', icon: 'briefcase' },
+      { id: 'remote_freelance', name: 'Remote / Freelancing', description: 'Tech contracts, software freelancing, remittance', color: '#0284c7', icon: 'laptop' },
+      { id: 'land_mortgage', name: 'Land Mortgage & Rent', description: 'Land mortgage yields, plot lease, tenant rent', color: '#d97706', icon: 'building' },
+      { id: 'business', name: 'Business & Trade', description: 'Commercial enterprise, trading, products', color: '#8b5cf6', icon: 'globe' },
+      { id: 'investment', name: 'Investment Returns', description: 'DPS profits, dividends, capital gains', color: '#0d9488', icon: 'trending-up' },
+      { id: 'other', name: 'Other Inflows', description: 'Gifts, one-off receipts, allowances', color: '#64748b', icon: 'plus-circle' },
+    ];
   }
 
-  logAudit(
-    workspaceId: string,
-    action: string,
-    resource_type: string,
-    resource_id: string,
-    details: Record<string, any>
-  ): void {
-    const list = this.get<AuditLog[]>(STORAGE_KEYS.AUDIT_LOGS, []);
-    list.push({
-      id: 'audit_' + Date.now(),
-      workspace_id: workspaceId,
-      actor_name: 'Sovon (Owner)',
-      action,
-      resource_type,
-      resource_id,
-      details,
-      created_at: new Date().toISOString(),
-    });
-    this.set(STORAGE_KEYS.AUDIT_LOGS, list);
+  saveIncomeTypes(workspaceId: string, types: IncomeTypeItem[]): void {
+    this.customIncomeTypes[workspaceId] = types;
+    this.notify();
   }
 
-  // Active Supabase Cloud Sync
-  async syncWithSupabase(workspaceId: string): Promise<{ success: boolean; message: string }> {
-    try {
-      if (!isSupabaseConfigured()) {
-        return { success: false, message: 'Supabase parameters missing' };
+  async ensureCategoriesForWorkspace(workspaceId: string): Promise<void> {
+    const existing = this.getCategories(workspaceId);
+    if (existing.length === 0) {
+      await this.seedInitialWorkspaceDefaults(workspaceId);
+    }
+  }
+
+  // ==========================================
+  // Initial Workspace Seeding directly to Supabase
+  // ==========================================
+  async seedInitialWorkspaceDefaults(workspaceId: string): Promise<void> {
+    const existingAccounts = this.getAccounts(workspaceId);
+    if (existingAccounts.length === 0) {
+      const defaultAccounts = [
+        { name: 'Cash In Hand', type: 'cash', provider: 'Cash', icon: 'banknote', color: '#10b981' },
+        { name: 'Cash In Bank / Online', type: 'bank', provider: 'Bank', icon: 'landmark', color: '#0284c7' },
+        { name: 'bKash Wallet', type: 'mfs', provider: 'bKash', icon: 'smartphone', color: '#e11d48' },
+        { name: 'Nagad Wallet', type: 'mfs', provider: 'Nagad', icon: 'smartphone', color: '#ea580c' },
+        { name: 'DSPF (BAF)', type: 'savings_dps', provider: 'BAF / DSPF', icon: 'piggy-bank', color: '#0d9488' },
+        { name: 'Unity Fund-2026', type: 'savings_dps', provider: 'Unity Fund', icon: 'flag', color: '#eab308' },
+        { name: 'Earned Revenue & Income', type: 'income_salary', provider: 'Revenue', icon: 'trending-up', color: '#10b981' },
+        { name: 'General Operating Expenses', type: 'expense_operating', provider: 'Operating', icon: 'receipt', color: '#ef4444' },
+      ];
+
+      for (const d of defaultAccounts) {
+        const accUuid = toUuid(`acc_${d.name.toLowerCase().replace(/[^a-z0-9]/g, '_')}_${workspaceId}`);
+        await this.saveAccount({
+          id: accUuid,
+          workspace_id: workspaceId,
+          name: d.name,
+          account_type_id: d.type,
+          provider: d.provider,
+          currency: 'BDT',
+          opening_balance: 0,
+          opening_date: new Date().toISOString().split('T')[0],
+          current_balance_cached: 0,
+          is_archived: false,
+          icon: d.icon,
+          color: d.color,
+          created_at: new Date().toISOString(),
+        });
       }
+    }
 
-      // Check categories table on Supabase
-      const { data: remoteCats, error } = await supabase
-        .from('categories')
-        .select('*')
-        .limit(10);
-
-      if (error) {
-        return { success: false, message: error.message };
+    const existingCats = this.getCategories(workspaceId);
+    if (existingCats.length === 0) {
+      for (let i = 0; i < SEED_CATEGORIES_DATA.length; i++) {
+        const c = SEED_CATEGORIES_DATA[i];
+        const catUuid = toUuid(`cat_${workspaceId}_${c.name.toLowerCase().replace(/[^a-z0-9]/g, '_')}`);
+        await this.saveCategory({
+          id: catUuid,
+          workspace_id: workspaceId,
+          name: c.name,
+          type: c.type,
+          income_type: c.income_type,
+          accounting_classification: c.accounting_classification,
+          icon: c.icon,
+          color: c.color,
+          is_seed: true,
+          is_archived: false,
+          sort_order: i + 1,
+        });
       }
-
-      return { 
-        success: true, 
-        message: `Synced with Supabase (${remoteCats?.length || 0} remote records verified)` 
-      };
-    } catch (err: any) {
-      return { success: false, message: err.message || 'Sync failed' };
     }
   }
 }
 
-export const db = new DatabaseEngine();
+export const db = new CentralizedDatabaseEngine();

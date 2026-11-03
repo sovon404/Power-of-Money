@@ -57,10 +57,14 @@ export const BudgetsView: React.FC = () => {
     setEditingBudget(null);
   };
 
-  const handleDeleteBudget = (b: Budget) => {
+  const handleDeleteBudget = async (b: Budget) => {
     if (confirm('Are you sure you want to delete this category budget limit?')) {
-      db.deleteBudget(b.id, workspaceId);
-      refreshData();
+      try {
+        await db.deleteBudget(b.id, workspaceId);
+        refreshData();
+      } catch (err: any) {
+        console.error('Failed to delete budget:', err);
+      }
     }
   };
 
@@ -82,7 +86,7 @@ export const BudgetsView: React.FC = () => {
     }
   });
 
-  const handleCreateBudget = (e: React.FormEvent) => {
+  const handleCreateBudget = async (e: React.FormEvent) => {
     e.preventDefault();
     const amt = parseFloat(budgetAmt);
     if (!selectedCatId || isNaN(amt) || amt <= 0) return;
@@ -101,11 +105,15 @@ export const BudgetsView: React.FC = () => {
       alert_threshold_percentage: parseInt(alertThreshold, 10) || 80,
     };
 
-    db.saveBudget(newBudget);
-    refreshData();
-    setShowAddModal(false);
-    setSelectedCatId('');
-    setBudgetAmt('');
+    try {
+      await db.saveBudget(newBudget);
+      refreshData();
+      setShowAddModal(false);
+      setSelectedCatId('');
+      setBudgetAmt('');
+    } catch (err: any) {
+      console.error('Failed to save budget:', err);
+    }
   };
 
   const getCategoryName = (id: string) => {

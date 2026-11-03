@@ -78,13 +78,6 @@ export const PropertyRegisterView: React.FC = () => {
     setEditingProperty(null);
   };
 
-  const handleDeleteProperty = (p: Property) => {
-    if (confirm(`Are you sure you want to delete property "${p.name}"?`)) {
-      db.deleteProperty(p.id, workspaceId);
-      refreshData();
-    }
-  };
-
   // New Property Form state
   const [propCode, setPropCode] = useState('');
   const [name, setName] = useState('');
@@ -198,6 +191,17 @@ export const PropertyRegisterView: React.FC = () => {
       setRecoverySuccess(null);
       setShowRecoveryModal(false);
     }, 2000);
+  };
+
+  const handleDeleteProperty = async (prop: Property) => {
+    if (confirm(`Are you sure you want to delete property "${prop.name}"? Valuations and recovery records will also be removed.`)) {
+      try {
+        await db.deleteProperty(prop.id, workspaceId);
+        refreshData();
+      } catch (err: any) {
+        console.error('Failed to delete property:', err);
+      }
+    }
   };
 
   const resetForm = () => {
@@ -375,18 +379,29 @@ export const PropertyRegisterView: React.FC = () => {
                 <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-2xs text-slate-500 mt-2">
                   <span>Valued: {prop.valuation_date}</span>
 
-                  {prop.recovery_amount_required > 0 && prop.remaining_recovery_balance > 0 && canWrite && (
-                    <button
-                      onClick={() => {
-                        setSelectedPropertyForRecovery(prop);
-                        setRecoveryAmount(prop.remaining_recovery_balance.toString());
-                        setShowRecoveryModal(true);
-                      }}
-                      className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-amber-600 text-white hover:bg-amber-500"
-                    >
-                      Record Recovery
-                    </button>
-                  )}
+                  <div className="flex items-center gap-2">
+                    {prop.recovery_amount_required > 0 && prop.remaining_recovery_balance > 0 && canWrite && (
+                      <button
+                        onClick={() => {
+                          setSelectedPropertyForRecovery(prop);
+                          setRecoveryAmount(prop.remaining_recovery_balance.toString());
+                          setShowRecoveryModal(true);
+                        }}
+                        className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-amber-600 text-white hover:bg-amber-500 cursor-pointer"
+                      >
+                        Record Recovery
+                      </button>
+                    )}
+                    {canWrite && (
+                      <button
+                        onClick={() => handleDeleteProperty(prop)}
+                        title="Delete Property"
+                        className="p-1 rounded-md text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-rose-50 dark:hover:bg-rose-950/50 transition-colors cursor-pointer"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
                 </div>
               </div>
             );

@@ -67,10 +67,14 @@ export const LoansView: React.FC = () => {
     setEditingLoan(null);
   };
 
-  const handleDeleteLoan = (loan: Loan) => {
+  const handleDeleteLoan = async (loan: Loan) => {
     if (confirm(`Are you sure you want to delete the loan "${loan.title}" (${loan.counterparty_name})?`)) {
-      db.deleteLoan(loan.id, workspaceId);
-      refreshData();
+      try {
+        await db.deleteLoan(loan.id, workspaceId);
+        refreshData();
+      } catch (err: any) {
+        console.error('Failed to delete loan:', err);
+      }
     }
   };
 

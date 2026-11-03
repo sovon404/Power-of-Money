@@ -64,18 +64,22 @@ export const LedgerView: React.FC<LedgerViewProps> = ({ onOpenNewTransaction }) 
     return true;
   });
 
-  const handleDeleteEntry = (entry: JournalEntry) => {
+  const handleDeleteEntry = async (entry: JournalEntry) => {
     if (window.confirm(`Are you sure you want to delete transaction #${entry.entry_number} (${entry.memo})? This will revert account balances in the database.`)) {
-      const res = db.deleteJournalEntry(workspaceId, entry.id);
-      if (res.success) {
-        refreshData();
-      } else {
-        alert(res.error || 'Failed to delete transaction.');
+      try {
+        const res = await db.deleteJournalEntry(workspaceId, entry.id);
+        if (res.success) {
+          refreshData();
+        } else {
+          setReversalError(res.error || 'Failed to delete transaction.');
+        }
+      } catch (err: any) {
+        setReversalError(err.message || 'Failed to delete transaction.');
       }
     }
   };
 
-  const handleExecuteReversal = (e: React.FormEvent) => {
+  const handleExecuteReversal = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!reversalTarget) return;
 
@@ -84,16 +88,20 @@ export const LedgerView: React.FC<LedgerViewProps> = ({ onOpenNewTransaction }) 
       return;
     }
 
-    const res = db.postReversal(workspaceId, reversalTarget.id, reversalReason.trim());
-    if (!res.success) {
-      setReversalError(res.error || 'Failed to reverse transaction.');
-      return;
-    }
+    try {
+      const res = await db.postReversal(workspaceId, reversalTarget.id, reversalReason.trim());
+      if (!res.success) {
+        setReversalError(res.error || 'Failed to reverse transaction.');
+        return;
+      }
 
-    refreshData();
-    setReversalTarget(null);
-    setReversalReason('');
-    setReversalError(null);
+      refreshData();
+      setReversalTarget(null);
+      setReversalReason('');
+      setReversalError(null);
+    } catch (err: any) {
+      setReversalError(err.message || 'Failed to reverse transaction.');
+    }
   };
 
   const getAccountName = (accId: string) => {
